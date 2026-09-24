@@ -5,7 +5,7 @@ import mediapipe as mp
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 
-# Iniciar la captura de video desde la cámara web predeterminada (0)
+# Iniciar la captura de video desde la cámara web predeterminada (3)
 cap = cv2.VideoCapture(3)
 
 print("Iniciando Resonantia... Presiona la tecla 'ESC' para salir.")
