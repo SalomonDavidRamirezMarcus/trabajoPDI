@@ -22,3 +22,7 @@ ambiente\Scripts\activate
 Luego, instala las librerías listadas en tu archivo requirements.txt
 
 pip install -r requirements.txt
+
+
+# para abrir el archivo desde la terminal se hace asi 
+python src/vision.py
