@@ -30,7 +30,7 @@ python src/vision.py
 ## Deteccion de varias personas
 
 El modulo de vision usa MediaPipe Pose Landmarker para detectar hasta 4 personas
-por fotograma. La camara sigue configurada con el indice `3`.
+por fotograma. La camara sigue configurada con el indice `0`.
 
 Descarga una vez el modelo oficial Lite desde PowerShell, en la raiz del proyecto:
 
@@ -53,3 +53,18 @@ como posible contacto de manos, o muñeca con antebrazo como posible contacto
 de brazos. Es una estimacion basada en la distancia entre puntos 2D; no confirma
 que haya agarre fisico y puede variar con la perspectiva, la oclusion y la
 posicion de la camara.
+
+## Metricas de interaccion
+
+La interfaz muestra la distancia entre los centros de cada pareja y, por
+participante, el desplazamiento entre fotogramas, la velocidad y la direccion
+de movimiento. Estas medidas se calculan en coordenadas normalizadas de la
+imagen: la velocidad se expresa en unidades normalizadas por segundo, no en
+unidades fisicas, porque no se ha calibrado la escala de la escena. La direccion
+usa los ejes de la imagen (0 grados a la derecha y 90 grados hacia abajo).
+
+La sincronia instantanea (de 0 a 1) promedia la similitud de direccion y rapidez
+entre las parejas que se estan moviendo en ese fotograma. No mide una tendencia
+de sincronizacion sostenida a lo largo del tiempo; las personas inmoviles no
+participan en ese calculo. El valor combina la alineacion de las direcciones con
+la relacion entre las rapideces de cada pareja.

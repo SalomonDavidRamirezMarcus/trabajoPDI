@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import hypot
 from pathlib import Path
 import time
 from typing import Sequence
@@ -13,8 +12,13 @@ from mediapipe.tasks.python.components.containers.landmark import (
     NormalizedLandmark,
 )
 
+if __package__:
+    from . import logic
+else:
+    import logic
 
-CAMERA_INDEX = 3
+
+CAMERA_INDEX = 0
 MAX_PEOPLE = 4
 CONTACT_DISTANCE_RATIO = 0.18
 MODEL_PATH = Path(__file__).resolve().parent.parent / "assets" / "pose_landmarker_lite.task"
@@ -44,6 +48,7 @@ class TrackedPose:
     track_id: int
     detection: PoseDetection
     movement: float
+    velocity: Point
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,7 @@ class PoseInteraction:
 @dataclass
 class _Track:
     center: Point
+    timestamp_seconds: float
     missed_frames: int = 0
 
 
@@ -82,7 +88,7 @@ def _midpoint(first: Point | None, second: Point | None) -> Point | None:
 
 
 def _point_distance(first: Point, second: Point) -> float:
-    return hypot(first[0] - second[0], first[1] - second[1])
+    return logic.calculate_distance(first, second)
 
 
 def _make_detection(
@@ -140,7 +146,9 @@ class PoseTracker:
         self._tracks: dict[int, _Track] = {}
         self._next_id = 1
 
-    def update(self, detections: Sequence[PoseDetection]) -> list[TrackedPose]:
+    def update(
+        self, detections: Sequence[PoseDetection], timestamp_seconds: float
+    ) -> list[TrackedPose]:
         candidates = [
             (self._distance(track.center, detection.center), track_id, index)
             for track_id, track in self._tracks.items()
@@ -175,16 +183,27 @@ class PoseTracker:
                 track_id = self._next_id
                 self._next_id += 1
                 movement = 0.0
-                self._tracks[track_id] = _Track(detection.center)
+                velocity = (0.0, 0.0)
+                self._tracks[track_id] = _Track(
+                    detection.center, timestamp_seconds
+                )
             else:
                 track_id, movement = assignment
-                self._tracks[track_id] = _Track(detection.center)
-            tracked.append(TrackedPose(track_id, detection, movement))
+                previous = self._tracks[track_id]
+                velocity = logic.calculate_velocity(
+                    previous.center,
+                    detection.center,
+                    timestamp_seconds - previous.timestamp_seconds,
+                )
+                self._tracks[track_id] = _Track(
+                    detection.center, timestamp_seconds
+                )
+            tracked.append(TrackedPose(track_id, detection, movement, velocity))
         return tracked
 
     @staticmethod
     def _distance(first: Point, second: Point) -> float:
-        return hypot(first[0] - second[0], first[1] - second[1])
+        return logic.calculate_distance(first, second)
 
 
 def _distance_to_segment(
@@ -388,7 +407,8 @@ def main() -> None:
                     image_format=mp.ImageFormat.SRGB,
                     data=rgb_frame,
                 )
-                timestamp_ms = time.monotonic_ns() // 1_000_000
+                timestamp_ns = time.monotonic_ns()
+                timestamp_ms = timestamp_ns // 1_000_000
                 result = landmarker.detect_for_video(mp_image, timestamp_ms)
 
                 valid_poses = []
@@ -397,9 +417,19 @@ def main() -> None:
                     if detection is not None:
                         valid_poses.append((landmarks, detection))
                 tracked_poses = tracker.update(
-                    [detection for _, detection in valid_poses]
+                    [detection for _, detection in valid_poses],
+                    timestamp_ns / 1_000_000_000,
                 )
                 interactions = _detect_interactions(tracked_poses)
+                pair_distances = logic.calculate_pair_distances(
+                    {
+                        tracked.track_id: tracked.detection.center
+                        for tracked in tracked_poses
+                    }
+                )
+                group_synchrony = logic.calculate_group_synchrony(
+                    [tracked.velocity for tracked in tracked_poses]
+                )
 
                 for (landmarks, _), tracked in zip(valid_poses, tracked_poses):
                     _draw_pose(frame, landmarks)
@@ -407,9 +437,17 @@ def main() -> None:
                     center_x = int(tracked.detection.center[0] * width)
                     center_y = int(tracked.detection.center[1] * height)
                     cv2.circle(frame, (center_x, center_y), 6, (0, 255, 255), -1)
+                    speed = logic.calculate_speed(tracked.velocity)
+                    direction = logic.calculate_direction(tracked.velocity)
+                    direction_label = (
+                        f"{direction:.0f} deg" if direction is not None else "--"
+                    )
                     cv2.putText(
                         frame,
-                        f"ID {tracked.track_id} | mov {tracked.movement:.3f}",
+                        (
+                            f"ID {tracked.track_id} | mov {tracked.movement:.3f}"
+                            f" | v {speed:.3f} norm/s | dir {direction_label}"
+                        ),
                         (center_x + 8, center_y - 8),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.55,
@@ -460,6 +498,32 @@ def main() -> None:
                     (0, 0, 255),
                     2,
                 )
+                synchrony_label = (
+                    f"{group_synchrony:.2f}"
+                    if group_synchrony is not None
+                    else "--"
+                )
+                cv2.putText(
+                    frame,
+                    f"Sincronia instantanea: {synchrony_label}",
+                    (20, 95),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (255, 255, 0),
+                    2,
+                )
+                for index, (first_id, second_id, distance) in enumerate(
+                    pair_distances
+                ):
+                    cv2.putText(
+                        frame,
+                        f"Distancia {first_id}-{second_id}: {distance:.3f}",
+                        (20, 125 + index * 25),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (255, 255, 0),
+                        2,
+                    )
                 cv2.imshow("Resonantia - Pose e interaccion", frame)
                 if cv2.waitKey(5) & 0xFF == 27:
                     break
