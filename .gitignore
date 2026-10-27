@@ -3,6 +3,7 @@ venv/
 env/
 ENV/
 ambiente/
+assets/pose_landmarker_lite.task
 
 # Archivos de caché de Python
 __pycache__/
