@@ -4,6 +4,8 @@ env/
 ENV/
 ambiente/
 assets/pose_landmarker_lite.task
+Soundfonts/
+
 
 # Archivos de caché de Python
 __pycache__/
