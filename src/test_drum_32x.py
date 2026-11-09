@@ -6,7 +6,7 @@ Ejecutar desde la carpeta raíz del proyecto:
     python src/test_drum_32x.py
 
 Prueba el banco/preset mostrado en FL Studio:
-    Banco 0x4000 (16384), programa 0x5C (92)
+    Banco 0x80 (128), programa 0x5C (92)
 
 NOTA: C5/D5/E5 se prueban inicialmente como MIDI 72/74/76.
 La numeración de octavas puede variar entre programas.
@@ -26,8 +26,8 @@ BLOCK_SIZE = 512
 SOUNDFONT_NAME = "The_Absolute_Sega_FM_Soundfont_V2.sf2"
 
 # Identificadores leídos de la captura de FL Studio.
-BANK = 0x4000
-PRESET = 0x5C
+BANK = 0x80  # FluidSynth informa que 32X DAC está en el banco 128.
+PRESET = 0x5C  # Programa 92.
 
 # Mapeo provisional según la referencia C5/D5/E5 del usuario.
 DRUM_CHANNEL = 9  # Canal MIDI 10; los índices de FluidSynth empiezan en 0.
