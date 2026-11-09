@@ -160,7 +160,9 @@ python src/music_sequencer.py
 | **exploration** | 2+ personas, sin contacto | melody, drums (+bass si synchrony≥0.5) | 0.5 | 0.45 |
 | **connection** | 2+ personas, **contacto detectado** | bass, drums, harmony, melody | 0.9 | 0.8 |
 
-Estas capas describen las decisiones y eventos del secuenciador. En la reproducción integrada actual, `ResonantiaAudio` omite los eventos `kick` y `hihat`; por tanto, la percusión se genera en la secuencia pero todavía no se escucha.
+Las capas se incorporan progresivamente según la cantidad de personas detectadas: una persona activa la melodía; dos, el bajo; tres, la percusión; y cuatro o más, la armonía. El director también considera variables de interacción, como el movimiento, la apertura de brazos, la sincronía y los posibles contactos, para determinar la expresividad musical.
+
+En la reproducción integrada, los eventos de percusión se envían al mismo motor FluidSynth mediante el canal MIDI 10 (índice interno 9), configurado con el banco 128 y el programa 92 del SoundFont. La melodía, el bajo y los acordes utilizan canales melódicos independientes.
 
 **Progresión armónica (4 compases → loop):**
 ```
@@ -172,7 +174,7 @@ Am9  →  Fmaj7  →  Cmaj7  →  G6
 - **Bass**: fundamental del acorde (MIDI 28–43)
 - **Chords**: notas del acorde (MIDI 60–76), acordes sostenidos 4 tiempos
 - **Melody**: notas del acorde en patrón (0,2,3,2), registro MIDI 72–88
-- **Drums**: Kick (36) en 1 y 3; Hi-hat (42) en cada tiempo
+- **Drums**: kit 32X DAC del SoundFont; Kick (MIDI 72), Hi-hat (MIDI 74) y Snare (MIDI 76). Se reproducen mediante el canal MIDI 10, banco 128 y programa 92.
 
 ---
 
@@ -217,9 +219,9 @@ Am9  →  Fmaj7  →  Cmaj7  →  G6
 
 1. **Captura:** OpenCV obtiene fotogramas de la cámara; se convierten a RGB y se envían a MediaPipe en modo video.
 2. **Estimación de pose:** Pose Landmarker Lite detecta hasta cuatro poses y produce landmarks normalizados. Se descartan puntos con visibilidad inferior a `0.5`.
-3. **Seguimiento y análisis:** `PoseTracker` asocia centros de poses entre fotogramas mediante emparejamiento greedy por distancia. `logic.py` calcula desplazamientos, velocidades, dirección, distancias y sincronía por parejas/grupal. `vision.py` estima posibles contactos de manos o brazos con umbrales relativos al ancho de hombros.
+3. **Seguimiento y análisis:** `PoseTracker` asocia centros de poses entre fotogramas mediante emparejamiento greedy por distancia y calcula la velocidad asociada a cada `track_id`. `main.py` utiliza esa velocidad individual para estimar el movimiento musical, evitando comparar posiciones por el índice de la persona en listas de fotogramas distintos. `logic.py` calcula desplazamientos, velocidades, dirección, distancias y sincronía por parejas/grupal. `vision.py` estima posibles contactos de manos o brazos con umbrales relativos al ancho de hombros.
 4. **Mapeo musical:** `MusicDirector` elige `silence`, `solo`, `exploration` o `connection`; `MusicSequencer` traduce esa decisión a notas, duraciones y velocidades en una progresión de cuatro acordes.
-5. **Expresión, reproducción y visualización:** `MusicWorker` suaviza movimiento y apertura de brazos, modifica la melodía y coordina compases. FluidSynth sintetiza el sonido; OpenCV dibuja los resultados sobre el video.
+5. **Expresión, reproducción y visualización:** `MusicWorker` suaviza movimiento y apertura de brazos, ajusta notas y velocidades mediante copias de los eventos musicales y coordina la reproducción por compases. `AudioEngine` utiliza FluidSynth y el SoundFont para sintetizar melodía, bajo, acordes y percusión; OpenCV procesa y presenta los resultados de visión en la interfaz.
 
 El sistema usa MediaPipe Pose Landmarker Lite como modelo preentrenado de estimación de pose. No se entrena un modelo propio ni se estima identidad de las personas. La “sincronía” es una medida geométrica del parecido entre velocidad y dirección de movimiento, no una evaluación psicológica o social.
 
@@ -244,7 +246,7 @@ Las pruebas automatizadas de `tests/test_logic.py` comprueban distancias normali
 
 **Resultado verificado:** `python -m unittest discover -s tests -v` ejecutado con el entorno virtual del proyecto terminó correctamente: **8 pruebas aprobadas, 0 fallidas**. Estas pruebas son unitarias; no miden precisión de pose, latencia, tasa de falsos contactos ni calidad musical.
 
-Como ejemplo de funcionamiento definido por las reglas del director, cero personas produce el modo `silence`; una persona, `solo`; dos o más sin contacto, `exploration`; y dos o más con contacto estimado, `connection`. La aplicación completa produce audio con las capas admitidas por el motor actual, pero no se ha documentado una evaluación cuantitativa con participantes o grabaciones.
+La ejecución integrada de la aplicación fue recuperada después de corregir la transformación de eventos musicales inmutables en `main.py`. También se verificó la inicialización de FluidSynth, la carga del SoundFont y la integración del kit de percusión. En las pruebas realizadas, la percusión se identificó auditivamente mediante sus notas MIDI configuradas. La validación de todas las capas con varios participantes simultáneos queda pendiente; por tanto, no se presenta todavía como una prueba de sistema completa.
 
 ## Conclusiones, limitaciones y mejoras
 
@@ -257,10 +259,15 @@ Limitaciones actuales:
 - Las distancias y velocidades están normalizadas, sin calibración en unidades físicas.
 - La interfaz permite elegir índices de cámara `0–5`, pero no detecta automáticamente qué índices están disponibles ni permite cambiar los umbrales de visión.
 - La salida de audio actual es específica de Windows y requiere dependencias y archivos locales externos al repositorio.
-- El secuenciador incluye percusión, pero la reproducción integrada no la envía al motor de audio.
+- El seguimiento por distancia de centros puede intercambiar IDs durante cruces, oclusiones o movimientos rápidos.
+- El contacto se estima en 2D y no confirma contacto físico; perspectiva, oclusión y visibilidad afectan el resultado.
+- Las distancias y velocidades están normalizadas, sin calibración en unidades físicas.
+- La interfaz permite elegir índices de cámara `0–5`, pero no detecta automáticamente qué índices están disponibles ni permite cambiar los umbrales de visión.
+- La salida de audio actual es específica de Windows y requiere dependencias y archivos locales externos al repositorio.
+- La validación de la reproducción simultánea de todas las capas con varios participantes todavía está pendiente.
 - No hay guardado de sesiones, registro de resultados, conjunto de datos ni capturas de evidencia.
 
-Oportunidades de mejora: habilitar reproducción de percusión, medir latencia y robustez con pruebas de sistema, incorporar calibración y seguimiento más estable, añadir configuración de dispositivos/umbrales y documentar sesiones de evaluación con consentimiento.
+Oportunidades de mejora: realizar pruebas de sistema con varios participantes para validar la activación simultánea de melodía, bajo, percusión y armonía; medir latencia y robustez; incorporar calibración y seguimiento más estable; añadir configuración de dispositivos/umbrales y documentar sesiones de evaluación con consentimiento.
 
 ## Estructura de directorios
 

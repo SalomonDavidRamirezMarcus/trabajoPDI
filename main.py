@@ -13,7 +13,7 @@ import queue
 import sys
 import time
 import threading
-from copy import copy
+from dataclasses import replace
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -50,16 +50,12 @@ INSTRUMENTS = {
     "melody": (0, 48),  # Strings
     "bass": (0, 32),    # Acoustic Bass
     "chords": (0, 0),   # Acoustic Piano
-    "kick": (0, 0),
-    "hihat": (0, 0),
 }
 
 CHANNELS = {
     "melody": 0,
     "bass": 1,
     "chords": 2,
-    "kick": 3,
-    "hihat": 4,
 }
 
 
@@ -149,6 +145,9 @@ class ResonantiaAudio:
         with self.lock:
             for channel in CHANNELS.values():
                 self.engine.all_sounds_off(channel)
+
+            # La percusión utiliza el canal MIDI 10 (índice FluidSynth 9).
+            self.engine.all_sounds_off(9)
 
     def close(self):
 
@@ -270,28 +269,33 @@ class MusicWorker:
             melody_events = []
 
             for event in events:
-                expressive = copy(event)
+                expressive = event
 
                 if expressive.instrument == "melody":
                     transposition = round(arm_opening * 7)
-                    expressive.midi_note = min(
-                        96, max(48, expressive.midi_note + transposition)
-                    )
-
-                    expressive.velocity = min(
-                        127,
-                        max(1, round(
-                            expressive.velocity * (0.65 + movement * 0.65)
-                        )),
+                    expressive = replace(
+                        expressive,
+                        midi_note=min(
+                            96, max(48, expressive.midi_note + transposition)
+                        ),
+                        velocity=min(
+                            127,
+                            max(1, round(
+                                expressive.velocity * (0.65 + movement * 0.65)
+                            )),
+                        ),
                     )
                     melody_events.append(expressive)
 
                 elif expressive.instrument in ("bass", "chords"):
-                    expressive.velocity = min(
-                        127,
-                        max(1, round(
-                            expressive.velocity * (0.80 + movement * 0.35)
-                        )),
+                    expressive = replace(
+                        expressive,
+                        velocity=min(
+                            127,
+                            max(1, round(
+                                expressive.velocity * (0.80 + movement * 0.35)
+                            )),
+                        ),
                     )
 
                 expressive_events.append(expressive)
@@ -300,9 +304,11 @@ class MusicWorker:
             # con dos acentos adicionales dentro del compás.
             if movement >= 0.55 and melody_events:
                 for source_event, beat in zip(melody_events[:2], (1.0, 3.0)):
-                    accent = copy(source_event)
-                    accent.beat = beat
-                    accent.velocity = min(127, round(accent.velocity * 0.85))
+                    accent = replace(
+                        source_event,
+                        beat=beat,
+                        velocity=min(127, round(source_event.velocity * 0.85)),
+                    )
                     expressive_events.append(accent)
 
             events = expressive_events
@@ -359,22 +365,24 @@ class MusicWorker:
 # INTERPRETACIÓN DEL MOVIMIENTO CORPORAL
 # ---------------------------------------------------------
 
-def analyze_movement(valid_poses, previous_centers, delta_time):
+def analyze_movement(valid_poses, tracked_poses, delta_time):
     """
-    Calcula dos controles musicales a partir de los landmarks de MediaPipe.
+    Calcula controles musicales usando las velocidades del tracker y
+    la apertura de brazos obtenida de los landmarks de MediaPipe.
 
-    movement: desplazamiento del torso entre fotogramas (0 a 1).
-    arm_opening: apertura de brazos respecto al ancho de hombros (0 a 1).
-
-    No depende de atributos internos de los objetos del tracker:
-    utiliza directamente los landmarks normalizados de MediaPipe.
+    Cada velocidad proviene de TrackedPose.velocity y está asociada a su
+    track_id, evitando comparar personas distintas entre fotogramas.
     """
-    centers = []
+    speeds = []
     openings = []
 
-    for landmarks, _detection in valid_poses:
-        # MediaPipe Pose: hombros 11/12, muñecas 15/16 y caderas 23/24.
-        required = (11, 12, 15, 16, 23, 24)
+    # PoseTracker conserva el orden de las detecciones del fotograma actual.
+    for (landmarks, _detection), person in zip(valid_poses, tracked_poses):
+        vx, vy = person.velocity
+        speeds.append((vx * vx + vy * vy) ** 0.5)
+
+        # MediaPipe Pose: hombros 11/12 y muñecas 15/16.
+        required = (11, 12, 15, 16)
         if len(landmarks) <= max(required):
             continue
 
@@ -382,18 +390,6 @@ def analyze_movement(valid_poses, previous_centers, delta_time):
         right_shoulder = landmarks[12]
         left_wrist = landmarks[15]
         right_wrist = landmarks[16]
-        left_hip = landmarks[23]
-        right_hip = landmarks[24]
-
-        torso_x = (
-            left_shoulder.x + right_shoulder.x
-            + left_hip.x + right_hip.x
-        ) / 4.0
-        torso_y = (
-            left_shoulder.y + right_shoulder.y
-            + left_hip.y + right_hip.y
-        ) / 4.0
-        centers.append((torso_x, torso_y))
 
         shoulder_width = (
             (left_shoulder.x - right_shoulder.x) ** 2
@@ -407,28 +403,15 @@ def analyze_movement(valid_poses, previous_centers, delta_time):
         if shoulder_width > 0.001:
             openings.append(wrist_width / shoulder_width)
 
-    displacements = []
-    for index, center in enumerate(centers):
-        if index < len(previous_centers):
-            old_x, old_y = previous_centers[index]
-            dx = center[0] - old_x
-            dy = center[1] - old_y
-            displacements.append((dx * dx + dy * dy) ** 0.5)
-
-    if displacements and delta_time > 0:
-        speed = sum(displacements) / len(displacements) / delta_time
-        movement = min(1.0, speed / 0.9)
+    if speeds and delta_time > 0:
+        average_speed = sum(speeds) / len(speeds)
+        movement = min(1.0, average_speed / 0.9)
     else:
         movement = 0.0
 
-    average_opening = (
-        sum(openings) / len(openings) if openings else 0.8
-    )
-    arm_opening = max(
-        0.0, min(1.0, (average_opening - 0.8) / 1.7)
-    )
-
-    return movement, arm_opening, centers
+    average_opening = sum(openings) / len(openings) if openings else 0.8
+    arm_opening = max(0.0, min(1.0, (average_opening - 0.8) / 1.7))
+    return movement, arm_opening
 
 
 # ---------------------------------------------------------
@@ -784,7 +767,6 @@ class ResonantiaApp:
             worker = MusicWorker(audio)
             tracker = vision.PoseTracker()
             previous_frame_time = time.monotonic()
-            previous_centers = []
             with mp.tasks.vision.PoseLandmarker.create_from_options(
                 options
             ) as landmarker:
@@ -834,8 +816,8 @@ class ResonantiaApp:
                         0.001, current_frame_time - previous_frame_time
                     )
                     previous_frame_time = current_frame_time
-                    movement, arm_opening, previous_centers = analyze_movement(
-                        valid_poses, previous_centers, delta_time
+                    movement, arm_opening = analyze_movement(
+                        valid_poses, tracked, delta_time
                     )
                     worker.update_state(
                         state, movement=movement, arm_opening=arm_opening
