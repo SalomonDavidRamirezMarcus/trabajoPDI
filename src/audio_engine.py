@@ -14,6 +14,8 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 
+from drum_synth import DrumSynth
+
 
 class AudioEngine:
     """Motor de reproducción musical de Resonantia."""
@@ -53,6 +55,7 @@ class AudioEngine:
         self._dll_directory = None
         self._lock = threading.Lock()
         self._running = False
+        self.drum_synth = DrumSynth(sample_rate)
 
         self._load_library()
         self._configure_functions()
@@ -307,6 +310,11 @@ class AudioEngine:
 
             return result
 
+    def trigger_drum(self, kind, velocity=90):
+        """Dispara un golpe de percusión sintetizada."""
+        with self._lock:
+            self.drum_synth.trigger(kind, velocity)
+
     def all_sounds_off(self, channel=0):
 
         with self._lock:
@@ -345,8 +353,9 @@ class AudioEngine:
         left_array = np.ctypeslib.as_array(left)
         right_array = np.ctypeslib.as_array(right)
 
-        outdata[:, 0] = left_array
-        outdata[:, 1] = right_array
+        drums = self.drum_synth.render(frames)
+        outdata[:, 0] = np.clip(left_array + drums, -1.0, 1.0)
+        outdata[:, 1] = np.clip(right_array + drums, -1.0, 1.0)
 
     # ---------------------------------------------------------
     # 7. INICIAR Y DETENER AUDIO

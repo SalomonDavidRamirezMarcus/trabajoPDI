@@ -1,28 +1,26 @@
-
 """
-Resonantia - Teoría musical
-Gestiona tonalidades, escalas, acordes y selección de notas.
+RESONANTIA - Motor de teoría musical
+Gestiona tonalidad, escalas, acordes, progresiones y selección de notas MIDI.
 
-Identidad sonora: Melódica
-Tonalidad: La menor natural
-Tempo: 110 BPM
-Compás de referencia: 4/4
+Configuración inicial:
+- Estilo: electrónica melódica bailable.
+- Tonalidad: La menor natural.
+- Tempo: 122 BPM.
+- Compás: 4/4.
+- Subdivisión: 4 pasos por pulso (semicorcheas).
 
-IMPORTANTE:
-- Las clases de altura van de 0 a 11.
-- Las notas MIDI van de 0 a 127.
+Las clases de altura van de 0 a 11.
+Las notas MIDI completas van de 0 a 127.
 """
 
 from dataclasses import dataclass
 from math import isfinite
+from typing import Iterable
 
 
 # ============================================================
-# 1. CONFIGURACIÓN DE NOTAS
+# 1. CONSTANTES MUSICALES
 # ============================================================
-
-# Clases de altura:
-# Do=0, Do#=1, Re=2 ... Si=11.
 
 NOTE_NAMES = (
     "Do", "Do#", "Re", "Re#", "Mi", "Fa",
@@ -32,48 +30,46 @@ NOTE_NAMES = (
 MIDI_MIN = 0
 MIDI_MAX = 127
 
-# La menor natural:
-# La, Si, Do, Re, Mi, Fa, Sol.
 A_MINOR_SCALE = (9, 11, 0, 2, 4, 5, 7)
-
-# Nombre de la tonalidad implementada.
 SUPPORTED_KEY = "La menor"
 
+DEFAULT_PROGRESSION = ("Am9", "Fmaj7", "Cmaj7", "G6")
 
-# ============================================================
-# 2. ACORDES DE RESONANTIA
-# ============================================================
-
-# Cada número representa una clase de altura,
-# NO una nota MIDI completa.
-
+# Cada valor representa una clase de altura, no una nota MIDI completa.
+# La fundamental aparece primero para conservar compatibilidad con
+# music_sequencer.py, que utiliza chord_notes[0] como raíz del bajo.
 CHORDS = {
-    "Am9":   (9, 0, 4, 7, 11),  # La - Do - Mi - Sol - Si
-    "Fmaj7": (5, 9, 0, 4),      # Fa - La - Do - Mi
-    "Cmaj7": (0, 4, 7, 11),     # Do - Mi - Sol - Si
-    "G6":    (7, 11, 2, 4),     # Sol - Si - Re - Mi
+    # Voicings principales de RESONANTIA.
+    "Am9":   (9, 0, 4, 7, 11),
+    "Fmaj7": (5, 9, 0, 4),
+    "Cmaj7": (0, 4, 7, 11),
+    "G6":    (7, 11, 2, 4),
+
+    # Alias sencillos para compatibilidad con versiones anteriores.
+    "Am": (9, 0, 4),
+    "F":  (5, 9, 0),
+    "C":  (0, 4, 7),
+    "G":  (7, 11, 2),
 }
 
 
 # ============================================================
-# 3. CONFIGURACIÓN MUSICAL
+# 2. CONFIGURACIÓN MUSICAL
 # ============================================================
 
 @dataclass(frozen=True)
 class MusicConfig:
-    """Configuración musical inicial de Resonantia."""
+    """Parámetros globales de teoría musical de RESONANTIA."""
 
-    bpm: int = 110
+    bpm: float = 122
     key: str = SUPPORTED_KEY
-    progression: tuple[str, ...] = (
-        "Am9",
-        "Fmaj7",
-        "Cmaj7",
-        "G6"
-    )
+    progression: tuple[str, ...] = DEFAULT_PROGRESSION
+    beats_per_bar: int = 4
+    steps_per_beat: int = 4
 
     def __post_init__(self):
-        # Validar BPM.
+        """Valida los parámetros para evitar configuraciones inconsistentes."""
+
         if isinstance(self.bpm, bool) or not isinstance(self.bpm, (int, float)):
             raise TypeError("El BPM debe ser un número.")
 
@@ -83,14 +79,12 @@ class MusicConfig:
         if not 1 <= self.bpm <= 300:
             raise ValueError("El BPM debe estar entre 1 y 300.")
 
-        # Validar tonalidad.
         if self.key != SUPPORTED_KEY:
             raise ValueError(
                 f"Tonalidad no implementada: {self.key}. "
                 f"Actualmente solo se admite {SUPPORTED_KEY}."
             )
 
-        # Validar progresión.
         if not isinstance(self.progression, tuple):
             raise TypeError("La progresión debe ser una tupla.")
 
@@ -98,71 +92,118 @@ class MusicConfig:
             raise ValueError("La progresión no puede estar vacía.")
 
         for chord in self.progression:
-            if chord not in CHORDS:
+            if not isinstance(chord, str) or chord not in CHORDS:
                 raise ValueError(f"Acorde no reconocido: {chord}")
+
+        if isinstance(self.beats_per_bar, bool) or not isinstance(self.beats_per_bar, int):
+            raise TypeError("beats_per_bar debe ser un entero.")
+
+        if self.beats_per_bar <= 0:
+            raise ValueError("beats_per_bar debe ser mayor que cero.")
+
+        if isinstance(self.steps_per_beat, bool) or not isinstance(self.steps_per_beat, int):
+            raise TypeError("steps_per_beat debe ser un entero.")
+
+        if self.steps_per_beat <= 0:
+            raise ValueError("steps_per_beat debe ser mayor que cero.")
+
+    @property
+    def seconds_per_beat(self) -> float:
+        """Duración de un pulso de negra según el BPM global."""
+        return 60.0 / self.bpm
+
+    @property
+    def seconds_per_bar(self) -> float:
+        """Duración de un compás completo."""
+        return self.seconds_per_beat * self.beats_per_bar
+
+    @property
+    def steps_per_bar(self) -> int:
+        """Cantidad de subdivisiones por compás."""
+        return self.beats_per_bar * self.steps_per_beat
+
+    @property
+    def seconds_per_step(self) -> float:
+        """Duración de una subdivisión del compás."""
+        return self.seconds_per_beat / self.steps_per_beat
 
 
 # ============================================================
-# 4. MOTOR DE ARMONÍA
+# 3. MOTOR DE ARMONÍA
 # ============================================================
 
 class HarmonyEngine:
     """
-    Aplica las reglas básicas de armonía de Resonantia.
+    Administra las reglas armónicas de RESONANTIA.
 
-    Administra:
-    - Progresión de acordes.
-    - Escala musical.
-    - Selección de notas compatibles.
-    - Conversión de clases de altura a notas MIDI.
+    Funciones principales:
+    - Recorrer la progresión de acordes.
+    - Consultar las notas de cada acorde.
+    - Identificar notas pertenecientes a La menor natural.
+    - Obtener notas seguras para melodías.
+    - Convertir clases de altura a nombres musicales.
+    - Generar listas de notas MIDI para registros concretos.
+
+    Este módulo no reproduce audio ni controla el reloj en tiempo real.
     """
 
     def __init__(self, config: MusicConfig | None = None):
+        if config is not None and not isinstance(config, MusicConfig):
+            raise TypeError("config debe ser una instancia de MusicConfig.")
+
         self.config = config if config is not None else MusicConfig()
         self.chord_index = 0
 
     # --------------------------------------------------------
-    # 4.1. CONSULTAR ACORDE ACTUAL
+    # 3.1. CONSULTA DEL ACORDE ACTUAL
     # --------------------------------------------------------
 
     @property
     def current_chord(self) -> str:
-        """Devuelve el acorde activo."""
+        """Devuelve el acorde activo de la progresión."""
         return self.config.progression[self.chord_index]
 
     # --------------------------------------------------------
-    # 4.2. AVANZAR EN LA PROGRESIÓN
+    # 3.2. CONTROL DE LA PROGRESIÓN
     # --------------------------------------------------------
 
     def advance_chord(self) -> str:
         """
-        Avanza al siguiente acorde.
+        Avanza al siguiente acorde y vuelve al inicio al terminar.
 
-        Al terminar la progresión, vuelve al primer acorde.
+        El módulo no decide cuándo cambiar de acorde: esa decisión debe
+        coordinarse con el reloj musical y el director de RESONANTIA.
         """
+        self.chord_index = (self.chord_index + 1) % len(self.config.progression)
+        return self.current_chord
 
-        self.chord_index = (
-            self.chord_index + 1
-        ) % len(self.config.progression)
+    def reset_progression(self) -> str:
+        """Reinicia la progresión al primer acorde."""
+        self.chord_index = 0
+        return self.current_chord
 
+    def set_chord_index(self, index: int) -> str:
+        """Permite establecer explícitamente la posición de la progresión."""
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise TypeError("El índice del acorde debe ser un entero.")
+
+        if not 0 <= index < len(self.config.progression):
+            raise ValueError("El índice está fuera de la progresión.")
+
+        self.chord_index = index
         return self.current_chord
 
     # --------------------------------------------------------
-    # 4.3. OBTENER NOTAS DE UN ACORDE
+    # 3.3. CONSULTA DE NOTAS DE ACORDES
     # --------------------------------------------------------
 
-    def get_chord_notes(
-        self,
-        chord: str | None = None
-    ) -> tuple[int, ...]:
+    def get_chord_notes(self, chord: str | None = None) -> tuple[int, ...]:
         """
-        Devuelve las clases de altura del acorde activo
-        o del acorde solicitado.
+        Devuelve las clases de altura del acorde indicado o del actual.
 
         Ejemplo:
-        Am9 -> (9, 0, 4, 7, 11)
+            Am9 -> (9, 0, 4, 7, 11)
         """
-
         if chord is None:
             chord = self.current_chord
 
@@ -172,26 +213,39 @@ class HarmonyEngine:
         return CHORDS[chord]
 
     # --------------------------------------------------------
-    # 4.4. COMPROBAR PERTENENCIA A LA ESCALA
+    # 3.4. VALIDACIÓN Y PERTENENCIA A LA ESCALA
     # --------------------------------------------------------
 
-    def is_in_scale(self, midi_note: int) -> bool:
-        """
-        Comprueba si una nota MIDI pertenece a La menor natural.
-
-        Recibe una nota MIDI completa entre 0 y 127.
-        """
-
+    @staticmethod
+    def _validate_midi_note(midi_note: int) -> None:
         if isinstance(midi_note, bool) or not isinstance(midi_note, int):
             raise TypeError("La nota MIDI debe ser un número entero.")
 
         if not MIDI_MIN <= midi_note <= MIDI_MAX:
             raise ValueError("La nota MIDI debe estar entre 0 y 127.")
 
+    @staticmethod
+    def _validate_midi_range(low_midi: int, high_midi: int) -> None:
+        for value, label in (
+            (low_midi, "límite inferior"),
+            (high_midi, "límite superior"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"El {label} debe ser un entero.")
+
+            if not MIDI_MIN <= value <= MIDI_MAX:
+                raise ValueError(f"El {label} debe estar entre 0 y 127.")
+
+        if low_midi > high_midi:
+            raise ValueError("El límite inferior supera al superior.")
+
+    def is_in_scale(self, midi_note: int) -> bool:
+        """Indica si una nota MIDI pertenece a La menor natural."""
+        self._validate_midi_note(midi_note)
         return midi_note % 12 in A_MINOR_SCALE
 
     # --------------------------------------------------------
-    # 4.5. OBTENER NOTAS DE LA ESCALA EN UN REGISTRO
+    # 3.5. NOTAS DE LA ESCALA EN UN REGISTRO
     # --------------------------------------------------------
 
     def get_scale_notes(
@@ -199,28 +253,8 @@ class HarmonyEngine:
         low_midi: int = 48,
         high_midi: int = 84
     ) -> list[int]:
-        """
-        Devuelve todas las notas MIDI de La menor natural
-        dentro del registro solicitado.
-
-        Ejemplo:
-        get_scale_notes(60, 72)
-        """
-
-        if isinstance(low_midi, bool) or not isinstance(low_midi, int):
-            raise TypeError("El límite inferior debe ser un entero.")
-
-        if isinstance(high_midi, bool) or not isinstance(high_midi, int):
-            raise TypeError("El límite superior debe ser un entero.")
-
-        if not MIDI_MIN <= low_midi <= MIDI_MAX:
-            raise ValueError("El límite inferior debe estar entre 0 y 127.")
-
-        if not MIDI_MIN <= high_midi <= MIDI_MAX:
-            raise ValueError("El límite superior debe estar entre 0 y 127.")
-
-        if low_midi > high_midi:
-            raise ValueError("El límite inferior supera al superior.")
+        """Devuelve las notas MIDI de La menor dentro del registro solicitado."""
+        self._validate_midi_range(low_midi, high_midi)
 
         return [
             note
@@ -229,75 +263,74 @@ class HarmonyEngine:
         ]
 
     # --------------------------------------------------------
-    # 4.6. NOTAS SEGURAS PARA LA MELODÍA
+    # 3.6. NOTAS SEGURAS PARA LA MELODÍA
     # --------------------------------------------------------
 
-    def get_safe_melody_notes(self) -> tuple[int, ...]:
+    def get_safe_melody_notes(self, chord: str | None = None) -> tuple[int, ...]:
         """
-        Devuelve las clases de altura del acorde actual
-        que también pertenecen a La menor.
+        Devuelve las clases de altura compartidas por el acorde y la escala.
 
-        Se conserva este formato por compatibilidad
-        con el código anterior de Resonantia.
+        Se conserva este método para mantener compatibilidad con el código
+        anterior de RESONANTIA.
         """
+        chord_notes = self.get_chord_notes(chord)
 
         return tuple(
-            note
-            for note in self.get_chord_notes()
+            note for note in chord_notes
             if note in A_MINOR_SCALE
         )
-
-    # --------------------------------------------------------
-    # 4.7. NOTAS MIDI SEGURAS PARA LA MELODÍA
-    # --------------------------------------------------------
 
     def get_safe_melody_midi_notes(
         self,
         low_midi: int = 60,
-        high_midi: int = 84
+        high_midi: int = 84,
+        chord: str | None = None
     ) -> list[int]:
         """
-        Devuelve notas MIDI completas que pertenecen
-        al acorde actual y a la escala de La menor.
-
-        Permite seleccionar registros adecuados para
-        construir melodías reconocibles.
+        Devuelve notas MIDI compatibles simultáneamente con el acorde
+        solicitado y la escala de La menor natural.
         """
-
-        if isinstance(low_midi, bool) or not isinstance(low_midi, int):
-            raise TypeError("El límite inferior debe ser un entero.")
-
-        if isinstance(high_midi, bool) or not isinstance(high_midi, int):
-            raise TypeError("El límite superior debe ser un entero.")
-
-        if not MIDI_MIN <= low_midi <= MIDI_MAX:
-            raise ValueError("El límite inferior debe estar entre 0 y 127.")
-
-        if not MIDI_MIN <= high_midi <= MIDI_MAX:
-            raise ValueError("El límite superior debe estar entre 0 y 127.")
-
-        if low_midi > high_midi:
-            raise ValueError("El límite inferior supera al superior.")
-
-        chord_pitch_classes = self.get_chord_notes()
+        self._validate_midi_range(low_midi, high_midi)
+        chord_pitch_classes = self.get_chord_notes(chord)
 
         return [
             note
             for note in range(low_midi, high_midi + 1)
-            if (
-                note % 12 in chord_pitch_classes
-                and self.is_in_scale(note)
-            )
+            if note % 12 in chord_pitch_classes and self.is_in_scale(note)
         ]
 
     # --------------------------------------------------------
-    # 4.8. CONVERTIR CLASE DE ALTURA A NOMBRE
+    # 3.7. SELECCIÓN DE NOTAS POR CLASE DE ALTURA
+    # --------------------------------------------------------
+
+    @staticmethod
+    def get_midi_notes_for_pitch_class(
+        pitch_class: int,
+        low_midi: int = 0,
+        high_midi: int = 127
+    ) -> list[int]:
+        """Devuelve todas las notas MIDI de una clase de altura en un registro."""
+        if isinstance(pitch_class, bool) or not isinstance(pitch_class, int):
+            raise TypeError("La clase de altura debe ser un entero.")
+
+        if not 0 <= pitch_class <= 11:
+            raise ValueError("La clase de altura debe estar entre 0 y 11.")
+
+        HarmonyEngine._validate_midi_range(low_midi, high_midi)
+
+        return [
+            note
+            for note in range(low_midi, high_midi + 1)
+            if note % 12 == pitch_class
+        ]
+
+    # --------------------------------------------------------
+    # 3.8. CONVERSIÓN A NOMBRE MUSICAL
     # --------------------------------------------------------
 
     @staticmethod
     def get_note_name(pitch_class: int) -> str:
-        """Convierte una clase de altura en su nombre musical."""
-
+        """Convierte una clase de altura (0-11) en su nombre musical."""
         if isinstance(pitch_class, bool) or not isinstance(pitch_class, int):
             raise TypeError("La clase de altura debe ser un entero.")
 
@@ -306,58 +339,69 @@ class HarmonyEngine:
 
         return NOTE_NAMES[pitch_class]
 
+    @staticmethod
+    def get_midi_note_name(midi_note: int) -> str:
+        """Devuelve el nombre de la nota correspondiente a un número MIDI."""
+        HarmonyEngine._validate_midi_note(midi_note)
+        octave = (midi_note // 12) - 1
+        return f"{NOTE_NAMES[midi_note % 12]}{octave}"
+
+    # --------------------------------------------------------
+    # 3.9. INFORMACIÓN DE LA CONFIGURACIÓN
+    # --------------------------------------------------------
+
+    def get_progression(self) -> tuple[str, ...]:
+        """Devuelve la progresión completa configurada."""
+        return self.config.progression
+
+    def get_progression_position(self) -> tuple[int, int]:
+        """Devuelve la posición actual como (índice, cantidad de acordes)."""
+        return self.chord_index, len(self.config.progression)
+
 
 # ============================================================
-# 5. PRUEBA INDEPENDIENTE DEL MÓDULO
+# 4. PRUEBA INDEPENDIENTE DEL MÓDULO
 # ============================================================
 
-if __name__ == "__main__":
+def run_self_test() -> None:
+    """Ejecuta comprobaciones básicas sin reproducir audio."""
 
     harmony = HarmonyEngine()
 
-    print("=" * 45)
-    print("       RESONANTIA - MOTOR MUSICAL")
-    print("=" * 45)
+    assert harmony.config.bpm == 122
+    assert harmony.config.beats_per_bar == 4
+    assert harmony.config.steps_per_beat == 4
+    assert harmony.current_chord == "Am9"
+    assert harmony.get_chord_notes() == (9, 0, 4, 7, 11)
+    assert harmony.get_chord_notes("Am") == (9, 0, 4)
+    assert harmony.is_in_scale(69)  # La
+    assert not harmony.is_in_scale(70)  # La#
 
-    print(f"Tonalidad: {harmony.config.key}")
-    print(f"Tempo: {harmony.config.bpm} BPM")
-    print(f"Progresión: {' -> '.join(harmony.config.progression)}")
+    safe_notes = harmony.get_safe_melody_midi_notes(60, 84)
+    assert safe_notes
+    assert all(note % 12 in harmony.get_chord_notes() for note in safe_notes)
 
-    print("\nACORDE INICIAL")
-    print("-" * 45)
-
-    print(f"Acorde: {harmony.current_chord}")
-    print(f"Notas: {harmony.get_chord_notes()}")
-    print(f"Notas melódicas: {harmony.get_safe_melody_notes()}")
-
-    print("\nNOTAS MIDI PARA LA MELODÍA")
-    print("-" * 45)
-
-    midi_notes = harmony.get_safe_melody_midi_notes()
-
-    for note in midi_notes:
-        pitch_class = note % 12
-        note_name = harmony.get_note_name(pitch_class)
-
-        print(f"MIDI {note}: {note_name}")
-
-    print("\nRECORRIDO DE LA PROGRESIÓN")
-    print("-" * 45)
-
+    progression = []
     for _ in range(len(harmony.config.progression)):
-
-        chord = harmony.current_chord
-        notes = harmony.get_chord_notes()
-
-        print(f"{chord}: {notes}")
-
+        progression.append(harmony.current_chord)
         harmony.advance_chord()
 
-    print("\nPRUEBA DE ESCALA")
-    print("-" * 45)
+    assert tuple(progression) == DEFAULT_PROGRESSION
+    assert harmony.current_chord == "Am9"
 
-    scale_notes = harmony.get_scale_notes(60, 72)
+    print("=" * 58)
+    print("RESONANTIA - PRUEBA DEL MOTOR DE TEORÍA MUSICAL")
+    print("=" * 58)
+    print(f"Tonalidad: {harmony.config.key}")
+    print(f"Tempo: {harmony.config.bpm} BPM")
+    print(f"Compás: {harmony.config.beats_per_bar}/4")
+    print(f"Subdivisiones por pulso: {harmony.config.steps_per_beat}")
+    print(f"Duración del pulso: {harmony.config.seconds_per_beat:.4f} s")
+    print(f"Duración del compás: {harmony.config.seconds_per_bar:.4f} s")
+    print(f"Progresión: {' -> '.join(harmony.get_progression())}")
+    print(f"Notas seguras para melodía: {safe_notes}")
+    print("Pruebas completadas correctamente.")
 
-    print(f"Notas MIDI entre 60 y 72: {scale_notes}")
 
-    print("\nMotor musical ejecutado correctamente.")
+if __name__ == "__main__":
+    run_self_test()

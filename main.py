@@ -40,7 +40,7 @@ from audio_engine import AudioEngine
 # ---------------------------------------------------------
 
 CAMERA_INDEX = 0
-BPM = 110
+BPM = 122
 
 SOUNDFONT = "The_Absolute_Sega_FM_Soundfont_V2.sf2"
 
@@ -99,8 +99,9 @@ class ResonantiaAudio:
 
         instrument = event.instrument
 
-        # La percusión se reserva para una configuración posterior.
-        if instrument in ("kick", "hihat"):
+        # Percusión sintetizada: no utiliza notas melódicas ni canales SoundFont.
+        if instrument in ("kick", "snare", "hihat"):
+            self.engine.trigger_drum(instrument, event.velocity)
             return
 
         channel = CHANNELS.get(instrument)
@@ -255,6 +256,8 @@ class MusicWorker:
                 state = self.current_state
                 movement = self.movement
                 arm_opening = self.arm_opening
+                state.movement = movement
+                state.arm_opening = arm_opening
 
             events, decision = self.sequencer.create_bar(
                 bar_number,
@@ -930,7 +933,7 @@ class ResonantiaApp:
                         if decision.bass_enabled:
                             layers.append("bajo")
                         if decision.drums_enabled:
-                            layers.append("percusion (generada)")
+                            layers.append("bateria sintetizada")
                         if decision.harmony_enabled:
                             layers.append("acordes")
                         if decision.melody_density > 0:
