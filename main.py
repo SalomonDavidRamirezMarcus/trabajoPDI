@@ -51,12 +51,14 @@ INSTRUMENTS = {
     "melody": (0, 48),  # Strings
     "bass": (0, 32),    # Acoustic Bass
     "chords": (0, 0),   # Acoustic Piano
+    "arpeggio": (5, 65),  # OPL4op Brass: banco FluidSynth 5, programa 65
 }
 
 CHANNELS = {
     "melody": 0,
     "bass": 1,
     "chords": 2,
+    "arpeggio": 3,
 }
 
 
@@ -290,7 +292,7 @@ class MusicWorker:
                         ),
                     )
 
-                elif expressive.instrument in ("bass", "chords"):
+                elif expressive.instrument in ("bass", "chords", "arpeggio"):
                     expressive = replace(
                         expressive,
                         velocity=min(
@@ -913,7 +915,9 @@ class ResonantiaApp:
                         if decision.drums_enabled:
                             layers.append("bateria sintetizada")
                         if decision.harmony_enabled:
-                            layers.append("acordes")
+                            layers.append("armonía")
+                        if decision.arpeggio_enabled:
+                            layers.append("arpegiador (sinte)")
                         if decision.melody_density > 0:
                             layers.append("melodia")
 

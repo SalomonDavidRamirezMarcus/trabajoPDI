@@ -32,9 +32,9 @@ MAX_MIDI_NOTE = 127
 # Si el piano roll de tu DAW usa otra convención de octavas,
 # se debe comprobar el número MIDI real antes de cambiar estos valores.
 DRUM_NOTES = {
-    "kick": 72,       # C5
-    "hihat": 75,      # Hi-hat identificado en el SoundFont
-    "snare": 76,      # E5
+    "kick": 74,       # Nota elegida y probada por el usuario
+    "hihat": 70,      # Nota elegida y probada por el usuario
+    "snare": 77,      # Nota elegida y probada por el usuario
 }
 
 # Patrones en pulsos de negra. Un compás 4/4 va de 0.0 a 4.0.
@@ -296,6 +296,71 @@ class MusicSequencer:
         return
 
     # --------------------------------------------------------
+    # 3.5. ARPEGIADOR (CUARTA CAPA)
+    # --------------------------------------------------------
+
+    def _create_arpeggio(
+        self,
+        events: list[MusicalEvent],
+        bar_number: int,
+        chord: str,
+        chord_notes: tuple[int, ...],
+        mode: str,
+        intensity: float,
+        movement: float,
+    ) -> None:
+        """Genera acordes rítmicos en tresillos para la cuarta capa."""
+        if not chord_notes:
+            return
+
+        # Tres ataques por pulso: 12 notas por compás 4/4.
+        triplet_offsets = (0.0, 1.0 / 3.0, 2.0 / 3.0)
+
+        velocity_base = int(
+            88 + self._clamp(intensity, 0.0, 1.0) * 14
+        )
+        if movement >= 0.65:
+            velocity_base += 4
+        velocity_base = min(110, velocity_base)
+
+        for beat_number in range(BEATS_PER_BAR):
+            # El patrón recorre las notas del acorde vigente.
+            chord_start = beat_number % len(chord_notes)
+
+            for triplet_index, offset in enumerate(triplet_offsets):
+                note_index = (
+                    chord_start + triplet_index
+                ) % len(chord_notes)
+
+                pitch_class = chord_notes[note_index]
+                note = self._pitch_class_to_midi(
+                    pitch_class, 72, 88, reference_note=79
+                )
+
+                # Acentos rítmicos en los pulsos 1 y 3,
+                # con un pequeño acento al comienzo de cada tresillo.
+                accent = 7 if beat_number in (0, 2) else 0
+                triplet_accent = 4 if triplet_index == 0 else 0
+                velocity = min(
+                    115,
+                    velocity_base + accent + triplet_accent,
+                )
+
+                absolute_beat = beat_number + offset
+
+                self._add_event(
+                    events,
+                    bar_number,
+                    absolute_beat,
+                    "arpeggio",
+                    note,
+                    0.20,
+                    velocity,
+                    chord,
+                    mode,
+                )
+
+    # --------------------------------------------------------
     # 3.5. MELODÍA
     # --------------------------------------------------------
 
@@ -447,6 +512,12 @@ class MusicSequencer:
                 decision.intensity
             )
 
+        if decision.arpeggio_enabled:
+            self._create_arpeggio(
+                events, bar_number, chord, chord_notes, decision.mode,
+                decision.intensity, movement
+            )
+
         if "melody" in decision.active_roles:
             self._create_melody(
                 events, bar_number, chord, chord_notes, decision.mode,
@@ -462,6 +533,7 @@ class MusicSequencer:
             "bass": 3,
             "chords": 4,
             "melody": 5,
+            "arpeggio": 6,
         }
         events.sort(
             key=lambda event: (

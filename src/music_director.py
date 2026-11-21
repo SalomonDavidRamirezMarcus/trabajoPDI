@@ -94,6 +94,7 @@ class MusicDecision:
     bass_enabled: bool
     drums_enabled: bool
     harmony_enabled: bool
+    arpeggio_enabled: bool
     melody_density: float
     intensity: float
     active_roles: tuple[str, ...] = ()
@@ -111,12 +112,12 @@ class MusicDirector:
     # Una persona: melodía.
     # Dos personas: melodía + bajo.
     # Tres personas: melodía + bajo + batería.
-    # Cuatro o más: se añade armonía.
+    # Cuatro o más: se añade OPL4op Brass como arpegiador.
     ROLE_THRESHOLDS = (
         (1, "melody"),
         (2, "bass"),
         (3, "drums"),
-        (4, "harmony"),
+        (4, "arpeggio"),
     )
 
     def __init__(self, harmony: Optional[HarmonyEngine] = None) -> None:
@@ -167,6 +168,7 @@ class MusicDirector:
                 bass_enabled=False,
                 drums_enabled=False,
                 harmony_enabled=False,
+                arpeggio_enabled=False,
                 melody_density=0.0,
                 intensity=0.0,
                 active_roles=(),
@@ -180,6 +182,7 @@ class MusicDirector:
         bass_enabled = "bass" in roles
         drums_enabled = "drums" in roles
         harmony_enabled = "harmony" in roles
+        arpeggio_enabled = "arpeggio" in roles
 
         # La sincronía elevada y la proximidad/interacción detectada indican
         # una experiencia colectiva más conectada. El contacto es una
@@ -260,6 +263,8 @@ class MusicDirector:
             events.append("enable_synthfont_drums")
         if harmony_enabled:
             events.append("enable_harmonic_layer")
+        if arpeggio_enabled:
+            events.append("enable_opl4op_brass_arpeggio")
 
         return MusicDecision(
             mode=mode,
@@ -267,6 +272,7 @@ class MusicDirector:
             bass_enabled=bass_enabled,
             drums_enabled=drums_enabled,
             harmony_enabled=harmony_enabled,
+            arpeggio_enabled=arpeggio_enabled,
             melody_density=density,
             intensity=intensity,
             active_roles=roles,
@@ -304,6 +310,7 @@ if __name__ == "__main__":
         print(f"Bajo: {decision.bass_enabled}")
         print(f"Batería: {decision.drums_enabled}")
         print(f"Armonía: {decision.harmony_enabled}")
+        print(f"Arpegiador OPL4op Brass: {decision.arpeggio_enabled}")
         print(f"Densidad melódica: {decision.melody_density:.2f}")
         print(f"Intensidad: {decision.intensity:.2f}")
         print(f"Eventos: {', '.join(decision.events)}")
