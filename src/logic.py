@@ -84,3 +84,24 @@ def calculate_pair_distances(
             sorted(positions.items()), 2
         )
     ]
+
+
+def calculate_direction_change(previous_velocity: Point, current_velocity: Point) -> float:
+    """Cuantifica el giro entre dos velocidades consecutivas (0 sin giro, 1 giro de 180°)."""
+    previous_speed = calculate_speed(previous_velocity)
+    current_speed = calculate_speed(current_velocity)
+    if previous_speed <= _MIN_MOVING_SPEED or current_speed <= _MIN_MOVING_SPEED:
+        return 0.0
+    cosine = (
+        previous_velocity[0] * current_velocity[0]
+        + previous_velocity[1] * current_velocity[1]
+    ) / (previous_speed * current_speed)
+    cosine = max(-1.0, min(1.0, cosine))
+    return (1.0 - cosine) / 2.0
+
+
+def calculate_acceleration(previous_speed: float, current_speed: float, elapsed_seconds: float) -> float:
+    """Cambio de rapidez por segundo, con validación del intervalo."""
+    if elapsed_seconds <= 0:
+        raise ValueError("elapsed_seconds debe ser mayor que cero.")
+    return (current_speed - previous_speed) / elapsed_seconds

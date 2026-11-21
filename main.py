@@ -33,6 +33,7 @@ import logic
 from music_director import MusicDirector, MusicState
 from music_sequencer import MusicSequencer
 from audio_engine import AudioEngine
+from motion_phrase import MotionPhraseDetector
 
 
 # ---------------------------------------------------------
@@ -220,6 +221,8 @@ class MusicWorker:
         # Variables expresivas obtenidas del movimiento corporal.
         self.movement = 0.0
         self.arm_opening = 0.0
+        self.phrase_detector = MotionPhraseDetector()
+        self.motion_phrase = self.phrase_detector.update(0.0, 0.0)
 
         self.running = True
 
@@ -230,10 +233,11 @@ class MusicWorker:
 
         self.thread.start()
 
-    def update_state(self, state, movement=0.0, arm_opening=0.0):
+    def update_state(self, state, movement=0.0, arm_opening=0.0, delta_time=1.0 / 30.0):
 
         with self.lock:
             self.current_state = state
+            self.motion_phrase = self.phrase_detector.update(movement, delta_time)
 
             # Suavizado para evitar cambios musicales bruscos entre fotogramas.
             self.movement = (
@@ -257,6 +261,8 @@ class MusicWorker:
                 arm_opening = self.arm_opening
                 state.movement = movement
                 state.arm_opening = arm_opening
+                state.motion_phase = self.motion_phrase.phase.value
+                state.motion_onset = self.motion_phrase.onset
 
             events, decision = self.sequencer.create_bar(
                 bar_number,
@@ -272,20 +278,17 @@ class MusicWorker:
                 expressive = event
 
                 if expressive.instrument == "melody":
-                    transposition = round(arm_opening * 7)
+                    # El piano es un acorde sostenido: no desplazar notas
+                    # individuales ni convertir el acorde en acentos/arpegios.
                     expressive = replace(
                         expressive,
-                        midi_note=min(
-                            96, max(48, expressive.midi_note + transposition)
-                        ),
                         velocity=min(
                             127,
                             max(1, round(
-                                expressive.velocity * (0.65 + movement * 0.65)
+                                expressive.velocity * (0.75 + movement * 0.45)
                             )),
                         ),
                     )
-                    melody_events.append(expressive)
 
                 elif expressive.instrument in ("bass", "chords"):
                     expressive = replace(
@@ -299,17 +302,6 @@ class MusicWorker:
                     )
 
                 expressive_events.append(expressive)
-
-            # Cuando el movimiento es intenso, la melodía responde
-            # con dos acentos adicionales dentro del compás.
-            if movement >= 0.55 and melody_events:
-                for source_event, beat in zip(melody_events[:2], (1.0, 3.0)):
-                    accent = replace(
-                        source_event,
-                        beat=beat,
-                        velocity=min(127, round(source_event.velocity * 0.85)),
-                    )
-                    expressive_events.append(accent)
 
             events = expressive_events
             with self.lock:
@@ -350,7 +342,10 @@ class MusicWorker:
             else:
                 time.sleep(4 * 60.0 / self.sequencer.bpm)
 
-            self.director.advance_bar()
+            # La progresión cambia cada dos compases: cada acorde de piano
+            # conserva su armonía durante aproximadamente cuatro segundos.
+            if bar_number % 2 == 0:
+                self.director.advance_bar()
 
             bar_number += 1
 
@@ -820,7 +815,8 @@ class ResonantiaApp:
                         valid_poses, tracked, delta_time
                     )
                     worker.update_state(
-                        state, movement=movement, arm_opening=arm_opening
+                        state, movement=movement, arm_opening=arm_opening,
+                        delta_time=delta_time
                     )
 
                     person_rows = []

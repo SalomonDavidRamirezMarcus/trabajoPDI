@@ -4,7 +4,7 @@ Gestiona tonalidad, escalas, acordes, progresiones y selección de notas MIDI.
 
 Configuración inicial:
 - Estilo: electrónica melódica bailable.
-- Tonalidad: La menor natural.
+- Tonalidad: Do mayor.
 - Tempo: 122 BPM.
 - Compás: 4/4.
 - Subdivisión: 4 pasos por pulso (semicorcheas).
@@ -30,28 +30,34 @@ NOTE_NAMES = (
 MIDI_MIN = 0
 MIDI_MAX = 127
 
-A_MINOR_SCALE = (9, 11, 0, 2, 4, 5, 7)
-SUPPORTED_KEY = "La menor"
+C_MAJOR_SCALE = (0, 2, 4, 5, 7, 9, 11)
+SUPPORTED_KEY = "Do mayor"
 
-DEFAULT_PROGRESSION = ("Am9", "Fmaj7", "Cmaj7", "G6")
+# Progresión diatónica sencilla: todos los acordes usan notas naturales.
+DEFAULT_PROGRESSION = ("Dm7", "G")
 
 # Cada valor representa una clase de altura, no una nota MIDI completa.
 # La fundamental aparece primero para conservar compatibilidad con
 # music_sequencer.py, que utiliza chord_notes[0] como raíz del bajo.
 CHORDS = {
-    # Voicings principales de RESONANTIA.
-    "Am9":   (9, 0, 4, 7, 11),
-    "Fmaj7": (5, 9, 0, 4),
-    "Cmaj7": (0, 4, 7, 11),
-    "G6":    (7, 11, 2, 4),
-
-    # Alias sencillos para compatibilidad con versiones anteriores.
+    # Triadas diatónicas en Do mayor (sin sostenidos ni bemoles).
+    # La fundamental va primero para mantener compatible el bajo.
+    "C":  (0, 4, 7),
     "Am": (9, 0, 4),
     "F":  (5, 9, 0),
-    "C":  (0, 4, 7),
-    "G":  (7, 11, 2),
-}
+    
 
+    # Alias compatibles con configuraciones o código anterior.
+    "Cmaj7": (0, 4, 7, 11),
+    "Am7":   (9, 0, 4, 7),
+    "Fmaj7": (5, 9, 0, 4),
+    "G7":    (7, 11, 2, 5),
+    "Em":    (4, 7, 11),
+     "Dm":    (2, 5, 9),
+    # Voicings RESONANTIA: Dm7 y G en segunda inversión (D en el bajo).
+    "Dm7":  (2, 5, 9, 0),
+    "G":    (2, 7, 11),
+}
 
 # ============================================================
 # 2. CONFIGURACIÓN MUSICAL
@@ -139,7 +145,7 @@ class HarmonyEngine:
     Funciones principales:
     - Recorrer la progresión de acordes.
     - Consultar las notas de cada acorde.
-    - Identificar notas pertenecientes a La menor natural.
+    - Identificar notas pertenecientes a Do mayor.
     - Obtener notas seguras para melodías.
     - Convertir clases de altura a nombres musicales.
     - Generar listas de notas MIDI para registros concretos.
@@ -202,7 +208,7 @@ class HarmonyEngine:
         Devuelve las clases de altura del acorde indicado o del actual.
 
         Ejemplo:
-            Am9 -> (9, 0, 4, 7, 11)
+            C -> (0, 4, 7)
         """
         if chord is None:
             chord = self.current_chord
@@ -240,9 +246,9 @@ class HarmonyEngine:
             raise ValueError("El límite inferior supera al superior.")
 
     def is_in_scale(self, midi_note: int) -> bool:
-        """Indica si una nota MIDI pertenece a La menor natural."""
+        """Indica si una nota MIDI pertenece a Do mayor."""
         self._validate_midi_note(midi_note)
-        return midi_note % 12 in A_MINOR_SCALE
+        return midi_note % 12 in C_MAJOR_SCALE
 
     # --------------------------------------------------------
     # 3.5. NOTAS DE LA ESCALA EN UN REGISTRO
@@ -253,7 +259,7 @@ class HarmonyEngine:
         low_midi: int = 48,
         high_midi: int = 84
     ) -> list[int]:
-        """Devuelve las notas MIDI de La menor dentro del registro solicitado."""
+        """Devuelve las notas MIDI de Do mayor dentro del registro solicitado."""
         self._validate_midi_range(low_midi, high_midi)
 
         return [
@@ -277,7 +283,7 @@ class HarmonyEngine:
 
         return tuple(
             note for note in chord_notes
-            if note in A_MINOR_SCALE
+            if note in C_MAJOR_SCALE
         )
 
     def get_safe_melody_midi_notes(
@@ -288,7 +294,7 @@ class HarmonyEngine:
     ) -> list[int]:
         """
         Devuelve notas MIDI compatibles simultáneamente con el acorde
-        solicitado y la escala de La menor natural.
+        solicitado y la escala de Do mayor.
         """
         self._validate_midi_range(low_midi, high_midi)
         chord_pitch_classes = self.get_chord_notes(chord)
@@ -371,11 +377,11 @@ def run_self_test() -> None:
     assert harmony.config.bpm == 122
     assert harmony.config.beats_per_bar == 4
     assert harmony.config.steps_per_beat == 4
-    assert harmony.current_chord == "Am9"
-    assert harmony.get_chord_notes() == (9, 0, 4, 7, 11)
+    assert harmony.current_chord == "C"
+    assert harmony.get_chord_notes() == (0, 4, 7)
     assert harmony.get_chord_notes("Am") == (9, 0, 4)
-    assert harmony.is_in_scale(69)  # La
-    assert not harmony.is_in_scale(70)  # La#
+    assert harmony.is_in_scale(60)  # Do
+    assert not harmony.is_in_scale(61)  # Do#
 
     safe_notes = harmony.get_safe_melody_midi_notes(60, 84)
     assert safe_notes
@@ -387,7 +393,7 @@ def run_self_test() -> None:
         harmony.advance_chord()
 
     assert tuple(progression) == DEFAULT_PROGRESSION
-    assert harmony.current_chord == "Am9"
+    assert harmony.current_chord == "C"
 
     print("=" * 58)
     print("RESONANTIA - PRUEBA DEL MOTOR DE TEORÍA MUSICAL")

@@ -35,9 +35,9 @@ class AudioEngine:
 
     # Notas confirmadas auditivamente en la prueba aislada.
     DRUM_NOTES = {
-        "kick": 72,   # C5
-        "hihat": 74,  # D5
-        "snare": 76,  # E5
+        "kick": 74,   # D#4
+        "hihat": 70,  # A#4
+        "snare": 77,  # G5
     }
 
     def __init__(

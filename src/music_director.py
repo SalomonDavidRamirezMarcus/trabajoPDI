@@ -40,6 +40,10 @@ class MusicState:
     synchrony: float = 0.0
     movement: float = 0.0
     arm_opening: float = 0.0
+    motion_phase: str = "stillness"
+    motion_onset: float = 0.0
+    direction_change: float = 0.0
+    acceleration: float = 0.0
 
     def __post_init__(self) -> None:
         """Valida los datos para evitar decisiones musicales inconsistentes."""
@@ -54,6 +58,11 @@ class MusicState:
         self.synchrony = self._validate_unit_interval(self.synchrony, "synchrony")
         self.movement = self._validate_unit_interval(self.movement, "movement")
         self.arm_opening = self._validate_unit_interval(self.arm_opening, "arm_opening")
+        if self.motion_phase not in {"stillness", "attack", "sustain", "release"}:
+            raise ValueError("motion_phase no es una fase reconocida.")
+        self.motion_onset = self._validate_unit_interval(self.motion_onset, "motion_onset")
+        self.direction_change = self._validate_unit_interval(self.direction_change, "direction_change")
+        self.acceleration = self._validate_unit_interval(self.acceleration, "acceleration")
 
     @staticmethod
     def _validate_unit_interval(value: float, field_name: str) -> float:
@@ -184,27 +193,53 @@ class MusicDirector:
 
         # La densidad responde principalmente al movimiento. La sincronía
         # añade un pequeño impulso colectivo, sin convertirla en tempo.
-        density = 0.25 + (state.movement * 0.60) + (state.synchrony * 0.10)
+        density = 0.25 + (state.movement * 0.52) + (state.synchrony * 0.10)
+        density += state.direction_change * 0.08
+        density += state.acceleration * 0.06
         if mode == "connection":
             density += 0.05
-        density = self._clamp(density, 0.15, 0.95)
+        if state.motion_phase == "attack":
+            density += 0.08 + state.motion_onset * 0.10
+        elif state.motion_phase == "release":
+            density *= 0.72
+        elif state.motion_phase == "stillness":
+            density *= 0.55
+        density = self._clamp(density, 0.08, 0.95)
 
         # La apertura de brazos modifica la intensidad expresiva. Se evita
         # que un único parámetro lleve la mezcla al máximo demasiado pronto.
         intensity = (
             0.20
-            + state.movement * 0.50
+            + state.movement * 0.42
+            + state.direction_change * 0.12
+            + state.acceleration * 0.10
             + state.arm_opening * 0.15
             + state.synchrony * 0.10
         )
         if mode == "connection":
             intensity += 0.05
-        intensity = self._clamp(intensity, 0.15, 0.95)
+        if state.motion_phase == "attack":
+            intensity += 0.12 + state.motion_onset * 0.12
+        elif state.motion_phase == "release":
+            intensity *= 0.78
+        elif state.motion_phase == "stillness":
+            intensity *= 0.65
+        intensity = self._clamp(intensity, 0.08, 0.95)
 
         # --------------------------------------------------------
         # Eventos semánticos para el secuenciador/arreglista
         # --------------------------------------------------------
-        events = ["shared_tempo", "quantized_changes"]
+        events = ["shared_tempo", "quantized_changes", f"motion_phase:{state.motion_phase}"]
+        if state.direction_change >= 0.35:
+            events.append("movement_direction_change")
+        if state.acceleration >= 0.35:
+            events.append("movement_acceleration")
+        if state.motion_phase == "attack":
+            events.append("motion_phrase_attack")
+        elif state.motion_phase == "release":
+            events.append("motion_phrase_release")
+        elif state.motion_phase == "stillness":
+            events.append("motion_phrase_stillness")
 
         if mode == "solo":
             events.append("play_individual_melody")

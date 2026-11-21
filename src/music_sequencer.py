@@ -6,14 +6,14 @@ Responsabilidades:
 - Traducir las decisiones de MusicDirector en eventos musicales.
 - Mantener todos los instrumentos dentro del mismo compás y reloj.
 - Generar batería usando las notas del kit 32X DAC del SoundFont.
-- Crear bajo, acordes y motivos melódicos relacionados con la armonía.
+- Crear bajo y acordes de piano sostenidos relacionados con la armonía.
 - Modificar densidad y acentos sin crear tempos independientes.
 
 Este módulo NO reproduce audio ni administra el reloj en tiempo real.
 Entrega eventos ordenados para que el motor de audio los programe.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 from music_director import MusicDirector, MusicState
@@ -33,7 +33,7 @@ MAX_MIDI_NOTE = 127
 # se debe comprobar el número MIDI real antes de cambiar estos valores.
 DRUM_NOTES = {
     "kick": 72,       # C5
-    "hihat": 74,      # D5
+    "hihat": 75,      # Hi-hat identificado en el SoundFont
     "snare": 76,      # E5
 }
 
@@ -42,10 +42,8 @@ KICK_PATTERN = (0.0, 1.0, 2.0, 3.0)
 SNARE_PATTERN = (1.0, 3.0)
 HIHAT_PATTERN = (0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5)
 
-# Motivo de grados relativos dentro del acorde.
-# Los índices se adaptan al número de notas del acorde actual.
-MELODY_MOTIF = (0, 2, 1, 2, 0, 1, 2, 1)
-MELODY_RHYTHM = (0.0, 0.5, 1.5, 2.0, 3.0, 3.5)
+# Piano: un acorde completo sostenido durante dos compases (8 negras).
+PIANO_CHORD_DURATION_BEATS = 8.0
 
 
 # ============================================================
@@ -88,8 +86,7 @@ class MusicSequencer:
         # configurado en 122 BPM. Este módulo no crea relojes alternativos.
         self.bpm = self.harmony.config.bpm
 
-        self._motif_index = 0
-        self._last_melody_note: int | None = None
+        self._motif_index = 0  # Conservado para compatibilidad; ya no aleatoriza.
 
     # --------------------------------------------------------
     # 3.1. VALIDACIONES Y UTILIDADES
@@ -295,20 +292,8 @@ class MusicSequencer:
         mode: str,
         intensity: float,
     ) -> None:
-        """Distribuye notas del acorde en voicings breves y sincronizados."""
-        if not chord_notes:
-            return
-
-        # Dos entradas por compás para aportar energía sin saturar.
-        for beat in (0.0, 2.0):
-            for pitch_class in chord_notes[:4]:
-                note = self._pitch_class_to_midi(pitch_class, 60, 76)
-                velocity = int(48 + self._clamp(intensity, 0, 1) * 18)
-
-                self._add_event(
-                    events, bar_number, beat, "chords",
-                    note, 0.72, velocity, chord, mode
-                )
+        """No añade golpes armónicos: el piano sostiene el acorde principal."""
+        return
 
     # --------------------------------------------------------
     # 3.5. MELODÍA
@@ -324,67 +309,99 @@ class MusicSequencer:
         density: float,
         intensity: float,
     ) -> None:
-        """
-        Construye un motivo melódico repetible con variaciones pequeñas.
+        """Toca las notas del acorde simultáneamente y las sostiene 2 compases.
 
-        Las notas se eligen entre las notas del acorde actual y se mantienen
-        en un registro agudo. Se favorecen movimientos cercanos para evitar
-        saltos excesivos entre notas consecutivas.
+        Se inicia únicamente en compases impares; el acorde permanece sonando
+        durante 8 negras (aprox. 3.93 s a 122 BPM), sin arpegios ni reataques.
         """
-        if not chord_notes:
+        if not chord_notes or bar_number % 2 == 0:
             return
 
-        density = self._clamp(density, 0.0, 1.0)
-        intensity = self._clamp(intensity, 0.0, 1.0)
-
-        if density < 0.35:
-            selected_beats = (0.0, 2.0)
-        elif density < 0.65:
-            selected_beats = (0.0, 1.0, 2.0, 3.0)
-        else:
-            selected_beats = MELODY_RHYTHM
-
-        for index, beat in enumerate(selected_beats):
-            motif_position = (index + self._motif_index) % len(MELODY_MOTIF)
-            chord_index = MELODY_MOTIF[motif_position] % len(chord_notes)
-            pitch_class = chord_notes[chord_index]
-
-            # Alterna el registro de manera moderada cada cierto número
-            # de compases, manteniendo el motivo reconocible.
-            low, high = (72, 88)
-            if self._motif_index == 2 and index == len(selected_beats) - 1:
-                low, high = (76, 91)
-
-            note = self._pitch_class_to_midi(
-                pitch_class,
-                low,
-                high,
-                reference_note=self._last_melody_note,
-            )
-
-            # Evita saltos grandes cuando existe una alternativa cercana.
-            if self._last_melody_note is not None:
-                nearby_notes = [
-                    candidate
-                    for candidate in range(69, 89)
-                    if candidate % 12 == pitch_class
-                ]
-                if nearby_notes:
-                    note = min(
-                        nearby_notes,
-                        key=lambda candidate: abs(candidate - self._last_melody_note),
-                    )
-
-            self._last_melody_note = note
-            velocity = int(58 + intensity * 28)
-
-            # Notas cortas para dejar espacio a la batería y al bajo.
+        velocity = int(58 + self._clamp(intensity, 0.0, 1.0) * 24)
+        # Voicing cerrado en registro medio: todas las notas comienzan juntas.
+        for pitch_class in chord_notes[:4]:
+            note = self._pitch_class_to_midi(pitch_class, 60, 76)
             self._add_event(
-                events, bar_number, beat, "melody",
-                note, 0.30, min(105, velocity), chord, mode
+                events, bar_number, 0.0, "melody",
+                note, PIANO_CHORD_DURATION_BEATS,
+                max(40, min(100, velocity)), chord, mode
             )
 
-        self._motif_index = (self._motif_index + 1) % 4
+    # --------------------------------------------------------
+    # 3.5.1. EXPRESIÓN SEGÚN LA FASE DEL MOVIMIENTO
+    # --------------------------------------------------------
+
+    def _apply_motion_phrase(
+        self,
+        events: list[MusicalEvent],
+        state: MusicState,
+    ) -> list[MusicalEvent]:
+        """
+        Aplica expresión temporal a los eventos YA generados.
+
+        Importante: no reemplaza ni elimina los patrones originales de batería,
+        bajo, armonía o melodía. Solo modifica velocity/duration de eventos
+        existentes según la fase calculada por MotionPhraseDetector.
+        MusicalEvent es frozen, por eso se usa dataclasses.replace.
+        """
+        phase = str(getattr(state, "motion_phase", "stillness")).lower()
+        # Enum MotionPhase hereda de str; .value se contempla por robustez.
+        phase_value = getattr(state, "motion_phase", "stillness")
+        phase = str(getattr(phase_value, "value", phase_value)).lower()
+        onset = self._clamp(
+            getattr(state, "motion_onset", 0.0), 0.0, 1.0
+        )
+
+        if phase not in {"attack", "sustain", "release", "stillness"}:
+            # Un valor desconocido no altera el secuenciador tradicional.
+            return events
+
+        expressive_events: list[MusicalEvent] = []
+        for event in events:
+            velocity = event.velocity
+            duration = event.duration_beats
+
+            if phase == "attack":
+                # Refuerza el inicio sin alterar el groove ni añadir golpes.
+                if event.instrument == "kick" and event.beat == 0.0:
+                    velocity += round(7 + 8 * onset)
+                elif event.instrument == "melody" and event.beat <= 0.5:
+                    velocity += round(5 + 7 * onset)
+                elif event.instrument == "snare":
+                    velocity += round(2 + 4 * onset)
+
+            elif phase == "sustain":
+                # El sostenimiento conserva el patrón y refuerza sutilmente
+                # los contratiempos existentes, sin crear otro tempo.
+                if event.instrument in {"bass", "hihat"} and event.beat % 1.0 != 0:
+                    velocity += 3
+
+            elif phase == "release":
+                # Retira energía gradualmente, pero conserva todos los eventos.
+                velocity = round(velocity * 0.78)
+                if event.instrument in {"kick", "snare", "hihat"}:
+                    velocity = round(velocity * 0.82)
+                # La última nota melódica puede respirar hasta el final del
+                # compás, sin cruzar el límite 4/4.
+                if event.instrument == "melody":
+                    # El acorde sostenido mantiene su duración de dos compases.
+                    duration = PIANO_CHORD_DURATION_BEATS
+                else:
+                    duration = max(0.08, duration * 0.88)
+
+            elif phase == "stillness":
+                # La quietud reduce la dinámica, no elimina la composición.
+                velocity = round(velocity * 0.68)
+                if event.instrument == "hihat":
+                    velocity = round(velocity * 0.80)
+
+            velocity = max(1, min(127, int(velocity)))
+            duration = max(0.05, float(duration))
+            expressive_events.append(
+                replace(event, velocity=velocity, duration_beats=duration)
+            )
+
+        return expressive_events
 
     # --------------------------------------------------------
     # 3.6. GENERAR UN COMPÁS
@@ -454,6 +471,10 @@ class MusicSequencer:
             )
         )
 
+        # Integración no destructiva de las fases corporales.
+        # La estructura original de eventos permanece intacta.
+        events = self._apply_motion_phrase(events, state)
+
         return events, decision
 
     # --------------------------------------------------------
@@ -462,7 +483,7 @@ class MusicSequencer:
 
     def create_progression(self, states: Iterable[MusicState]):
         """
-        Genera varios compases y avanza un acorde al terminar cada uno.
+        Genera varios compases y avanza un acorde cada dos compases.
 
         Cada elemento de states representa el estado humano correspondiente
         a un compás. La temporización real debe realizarla el reloj global.
@@ -483,7 +504,8 @@ class MusicSequencer:
                 }
             )
 
-            self.director.advance_bar()
+            if bar_number % 2 == 0:
+                self.director.advance_bar()
 
         return all_events, results
 
