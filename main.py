@@ -10,6 +10,9 @@ Ejecutar desde la raíz:
 
 import base64
 import queue
+import heapq
+import itertools
+import math
 import sys
 import time
 import threading
@@ -66,95 +69,110 @@ CHANNELS = {
 # CONTROLADOR DE AUDIO
 # ---------------------------------------------------------
 
+class _NoteOffScheduler:
+    """Un único hilo agenda los apagados MIDI; evita un Timer por nota."""
+
+    def __init__(self, callback):
+        self.callback = callback
+        self.condition = threading.Condition()
+        self.queue = []
+        self.sequence = itertools.count()
+        self.closed = False
+        self.thread = threading.Thread(
+            target=self._run, name="ResonantiaNoteOff", daemon=True
+        )
+        self.thread.start()
+
+    def schedule(self, delay, note, channel):
+        deadline = time.monotonic() + max(0.0, float(delay))
+        with self.condition:
+            if self.closed:
+                return
+            heapq.heappush(
+                self.queue, (deadline, next(self.sequence), note, channel)
+            )
+            self.condition.notify()
+
+    def _run(self):
+        while True:
+            with self.condition:
+                while not self.closed and not self.queue:
+                    self.condition.wait()
+                if self.closed:
+                    return
+                deadline, _, note, channel = self.queue[0]
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    self.condition.wait(timeout=remaining)
+                    continue
+                heapq.heappop(self.queue)
+            try:
+                self.callback(note, channel)
+            except Exception as exc:
+                print(f"RESONANTIA: error al apagar nota: {exc}")
+
+    def close(self):
+        with self.condition:
+            self.closed = True
+            self.queue.clear()
+            self.condition.notify_all()
+        self.thread.join(timeout=1.5)
+
+
 class ResonantiaAudio:
+    """Adaptador musical con programación centralizada de note-off."""
 
     def __init__(self):
-
         self.engine = AudioEngine(
-            soundfont_name=SOUNDFONT,
-            sample_rate=44100,
-            gain=0.7,
-            bank=0,
-            preset=48,
+            soundfont_name=SOUNDFONT, sample_rate=44100, gain=0.7,
+            bank=0, preset=48,
         )
-
         self.engine.start()
-
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self.active = True
 
-        # Seleccionar un instrumento por canal.
         for instrument, (bank, preset) in INSTRUMENTS.items():
-
-            channel = CHANNELS[instrument]
-
             self.engine.select_instrument(
-                bank=bank,
-                preset=preset,
-                channel=channel,
+                bank=bank, preset=preset, channel=CHANNELS[instrument]
             )
+        self.note_scheduler = _NoteOffScheduler(self.stop_note)
 
     def play_event(self, event):
-
         instrument = event.instrument
-
-        # Percusión sintetizada: no utiliza notas melódicas ni canales SoundFont.
         if instrument in ("kick", "snare", "hihat"):
-            self.engine.trigger_drum(instrument, event.velocity)
+            if self.active:
+                self.engine.trigger_drum(instrument, event.velocity)
             return
 
         channel = CHANNELS.get(instrument)
-
-        if channel is None:
+        if channel is None or not self.active:
             return
-
-        velocity = max(
-            1,
-            min(127, int(event.velocity))
-        )
-
+        velocity = max(1, min(127, int(event.velocity)))
         with self.lock:
+            if not self.active:
+                return
+            self.engine.note_on(event.midi_note, velocity, channel)
 
-            self.engine.note_on(
-                event.midi_note,
-                velocity=velocity,
-                channel=channel,
-            )
-
-        duration = (
-            event.duration_beats * 60.0 / BPM
-        )
-
-        # El apagado se programa sin bloquear la cámara.
-        threading.Timer(
-            duration,
-            self.stop_note,
-            args=(event.midi_note, channel),
-        ).start()
+        duration = max(0.01, float(event.duration_beats) * 60.0 / BPM)
+        self.note_scheduler.schedule(duration, event.midi_note, channel)
 
     def stop_note(self, note, channel):
-
-        if not self.active:
-            return
-
         with self.lock:
-            self.engine.note_off(
-                note,
-                channel=channel,
-            )
+            if self.active:
+                self.engine.note_off(note, channel=channel)
 
     def silence(self):
-
         with self.lock:
             for channel in CHANNELS.values():
                 self.engine.all_sounds_off(channel)
-
-            # La percusión utiliza el canal MIDI 10 (índice FluidSynth 9).
             self.engine.all_sounds_off(9)
 
     def close(self):
-
-        self.active = False
+        with self.lock:
+            if not self.active:
+                return
+            self.active = False
+        self.note_scheduler.close()
         self.silence()
         self.engine.close()
 
@@ -363,49 +381,35 @@ class MusicWorker:
 # ---------------------------------------------------------
 
 def analyze_movement(valid_poses, tracked_poses, delta_time):
-    """
-    Calcula controles musicales usando las velocidades del tracker y
-    la apertura de brazos obtenida de los landmarks de MediaPipe.
-
-    Cada velocidad proviene de TrackedPose.velocity y está asociada a su
-    track_id, evitando comparar personas distintas entre fotogramas.
-    """
+    """Obtiene movimiento y apertura usando landmarks suficientemente visibles."""
     speeds = []
     openings = []
 
-    # PoseTracker conserva el orden de las detecciones del fotograma actual.
-    for (landmarks, _detection), person in zip(valid_poses, tracked_poses):
-        vx, vy = person.velocity
-        speeds.append((vx * vx + vy * vy) ** 0.5)
+    def visible(landmark, threshold=0.5):
+        visibility = getattr(landmark, "visibility", None)
+        x, y = getattr(landmark, "x", None), getattr(landmark, "y", None)
+        return (
+            visibility is not None and visibility >= threshold
+            and x is not None and y is not None
+            and math.isfinite(float(x)) and math.isfinite(float(y))
+        )
 
-        # MediaPipe Pose: hombros 11/12 y muñecas 15/16.
-        required = (11, 12, 15, 16)
-        if len(landmarks) <= max(required):
+    for (_landmarks, _detection), person in zip(valid_poses, tracked_poses):
+        vx, vy = person.velocity
+        speeds.append(math.hypot(vx, vy))
+        landmarks = _landmarks
+        if len(landmarks) <= 16:
+            continue
+        ls, rs, lw, rw = landmarks[11], landmarks[12], landmarks[15], landmarks[16]
+        if not all(visible(p) for p in (ls, rs, lw, rw)):
             continue
 
-        left_shoulder = landmarks[11]
-        right_shoulder = landmarks[12]
-        left_wrist = landmarks[15]
-        right_wrist = landmarks[16]
-
-        shoulder_width = (
-            (left_shoulder.x - right_shoulder.x) ** 2
-            + (left_shoulder.y - right_shoulder.y) ** 2
-        ) ** 0.5
-        wrist_width = (
-            (left_wrist.x - right_wrist.x) ** 2
-            + (left_wrist.y - right_wrist.y) ** 2
-        ) ** 0.5
-
-        if shoulder_width > 0.001:
+        shoulder_width = math.hypot(ls.x - rs.x, ls.y - rs.y)
+        wrist_width = math.hypot(lw.x - rw.x, lw.y - rw.y)
+        if shoulder_width > 0.015:
             openings.append(wrist_width / shoulder_width)
 
-    if speeds and delta_time > 0:
-        average_speed = sum(speeds) / len(speeds)
-        movement = min(1.0, average_speed / 0.9)
-    else:
-        movement = 0.0
-
+    movement = min(1.0, (sum(speeds) / len(speeds)) / 0.9) if speeds and delta_time > 0 else 0.0
     average_opening = sum(openings) / len(openings) if openings else 0.8
     arm_opening = max(0.0, min(1.0, (average_opening - 0.8) / 1.7))
     return movement, arm_opening

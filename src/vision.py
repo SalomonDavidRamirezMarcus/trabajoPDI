@@ -149,26 +149,52 @@ class PoseTracker:
     def update(
         self, detections: Sequence[PoseDetection], timestamp_seconds: float
     ) -> list[TrackedPose]:
-        candidates = [
-            (self._distance(track.center, detection.center), track_id, index)
-            for track_id, track in self._tracks.items()
-            for index, detection in enumerate(detections)
-        ]
-        candidates.sort()
+        # Emparejamiento global: primero maximiza tracks conservados y luego
+        # minimiza la distancia total. Con el límite habitual de 4 personas,
+        # la búsqueda exhaustiva es pequeña y evita el greedy que intercambia IDs.
+        track_ids = sorted(self._tracks)
+        valid_edges = {
+            (track_id, index): self._distance(self._tracks[track_id].center, det.center)
+            for track_id in track_ids
+            for index, det in enumerate(detections)
+            if self._distance(self._tracks[track_id].center, det.center)
+            <= self.max_match_distance
+        }
 
-        matched_tracks: set[int] = set()
-        matched_detections: set[int] = set()
-        assignments: dict[int, tuple[int, float]] = {}
-        for distance, track_id, index in candidates:
-            if (
-                distance > self.max_match_distance
-                or track_id in matched_tracks
-                or index in matched_detections
-            ):
-                continue
-            matched_tracks.add(track_id)
-            matched_detections.add(index)
-            assignments[index] = (track_id, distance)
+        best_pairs = []
+        best_key = (-1, float("inf"))
+
+        def search(position, used_detections, pairs, total_distance):
+            nonlocal best_pairs, best_key
+            if position >= len(track_ids):
+                key = (len(pairs), total_distance)
+                if key[0] > best_key[0] or (
+                    key[0] == best_key[0] and key[1] < best_key[1]
+                ):
+                    best_key = key
+                    best_pairs = pairs.copy()
+                return
+
+            track_id = track_ids[position]
+            # También se permite que este track quede sin asociación.
+            search(position + 1, used_detections, pairs, total_distance)
+            for index in range(len(detections)):
+                distance = valid_edges.get((track_id, index))
+                if distance is None or index in used_detections:
+                    continue
+                used_detections.add(index)
+                pairs.append((track_id, index, distance))
+                search(position + 1, used_detections, pairs, total_distance + distance)
+                pairs.pop()
+                used_detections.remove(index)
+
+        search(0, set(), [], 0.0)
+        matched_tracks = {track_id for track_id, _, _ in best_pairs}
+        matched_detections = {index for _, index, _ in best_pairs}
+        assignments = {
+            index: (track_id, distance)
+            for track_id, index, distance in best_pairs
+        }
 
         for track_id, track in list(self._tracks.items()):
             if track_id not in matched_tracks:
@@ -190,10 +216,11 @@ class PoseTracker:
             else:
                 track_id, movement = assignment
                 previous = self._tracks[track_id]
-                velocity = logic.calculate_velocity(
-                    previous.center,
-                    detection.center,
-                    timestamp_seconds - previous.timestamp_seconds,
+                elapsed = timestamp_seconds - previous.timestamp_seconds
+                velocity = (
+                    logic.calculate_velocity(previous.center, detection.center, elapsed)
+                    if elapsed > 0
+                    else (0.0, 0.0)
                 )
                 self._tracks[track_id] = _Track(
                     detection.center, timestamp_seconds

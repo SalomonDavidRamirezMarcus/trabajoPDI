@@ -1,0 +1,7 @@
+Cambios incluidos:
+1. main.py: note-off centralizado en un hilo con cola de prioridad; elimina un Timer por nota.
+2. main.py: apertura de brazos filtra landmarks visibles, coordenadas finitas y ancho mínimo.
+3. src/vision.py: asignación global track/detección y protección contra timestamps repetidos.
+4. src/test_audio_engine.py: unittest opcional sin abrir audio al importarse.
+5. README.md: instrucciones actualizadas.
+Se conservaron los demás módulos completos.
