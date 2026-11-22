@@ -1448,6 +1448,101 @@ class ResonantiaApp:
             style="Hint.TLabel", wraplength=850,
         ).pack(side="right")
 
+        # Configuración comparte el área principal: no abre una ventana emergente.
+        self._build_settings_view()
+        self.dashboard_frame.tkraise()
+
+    def _build_settings_view(self):
+        self.settings_frame = tk.Frame(
+            self.app_shell, bg=self.colors["background"]
+        )
+        self.settings_frame.grid(row=0, column=1, sticky="nsew")
+        self.settings_frame.columnconfigure(0, weight=1)
+
+        header = ttk.Frame(self.settings_frame, padding=(24, 22, 24, 12))
+        header.grid(row=0, column=0, sticky="ew")
+        ttk.Label(header, text="CONFIGURACIÓN", style="Eyebrow.TLabel").pack(anchor="w")
+        ttk.Label(header, text="Configura tu espacio", style="Brand.TLabel").pack(anchor="w", pady=(5, 0))
+        ttk.Label(
+            header, text="Ajusta la cámara y la apariencia de Resonantia.",
+            style="Subtitle.TLabel"
+        ).pack(anchor="w", pady=(4, 0))
+
+        body = ttk.Frame(self.settings_frame, padding=(24, 8, 24, 20))
+        body.grid(row=1, column=0, sticky="new")
+        body.columnconfigure(0, weight=1)
+
+        camera_card = RoundedPanel(
+            body, background=self.colors["surface"],
+            border=self.colors["border"], radius=18
+        )
+        camera_card.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        camera = camera_card.content
+        ttk.Label(camera, text="Cámara", style="Section.TLabel").pack(
+            anchor="w", padx=16, pady=(15, 4)
+        )
+        ttk.Label(
+            camera, text="Elige el dispositivo que usará la experiencia.",
+            style="Hint.TLabel"
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+        self.settings_camera_var = tk.StringVar(value=str(self.camera_var.get()))
+        camera_values = self._available_cameras()
+        self.settings_camera_pick = ttk.Combobox(
+            camera, values=camera_values, state="readonly",
+            textvariable=self.settings_camera_var, width=16
+        )
+        if self.settings_camera_var.get() not in camera_values:
+            self.settings_camera_var.set(camera_values[0])
+        self.settings_camera_pick.pack(anchor="w", padx=16, pady=(0, 16))
+
+        theme_card = RoundedPanel(
+            body, background=self.colors["surface"],
+            border=self.colors["border"], radius=18
+        )
+        theme_card.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        theme = theme_card.content
+        ttk.Label(theme, text="Apariencia", style="Section.TLabel").pack(
+            anchor="w", padx=16, pady=(15, 4)
+        )
+        ttk.Label(
+            theme, text="Selecciona una paleta para toda la interfaz.",
+            style="Hint.TLabel"
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+
+        self.theme_display_var = tk.StringVar(
+            value="Modo claro" if self.theme_mode == "light" else "Modo oscuro"
+        )
+        self.theme_mode_pick = ttk.Combobox(
+            theme, values=("Modo oscuro", "Modo claro"),
+            state="readonly", textvariable=self.theme_display_var, width=24
+        )
+        self.theme_mode_pick.pack(anchor="w", padx=16, pady=(0, 16))
+        self.theme_mode_pick.bind("<<ComboboxSelected>>", self._on_theme_selected)
+
+        actions = ttk.Frame(body)
+        actions.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(
+            actions, text="Volver a Experiencia",
+            command=self._show_dashboard_view
+        ).pack(side="left")
+        ttk.Button(
+            actions, text="Aplicar cámara",
+            style="Accent.TButton", command=self._save_settings_page
+        ).pack(side="right")
+
+    def _on_theme_selected(self, _event=None):
+        selected = self.theme_display_var.get()
+        mode = "light" if selected == "Modo claro" else "dark"
+        self._apply_theme(mode)
+
+    def _save_settings_page(self):
+        selected_camera = self.settings_camera_var.get()
+        if selected_camera:
+            self.camera_var.set(str(selected_camera))
+        self.status_var.set(
+            "Preferencias aplicadas. La cámara seleccionada se usará al iniciar."
+        )
+
     def _draw_metric_charts(self):
         """Dibuja tres sparklines ligeras con datos reales de la sesión."""
         canvas = getattr(self, "metric_chart", None)
@@ -1502,83 +1597,20 @@ class ResonantiaApp:
         return item
 
     def _show_dashboard_view(self):
-        # La navegación de regreso no reinicia cámara ni motor.
+        # Cambia de vista sin reiniciar cámara ni motor.
         if hasattr(self, "dashboard_frame") and self.dashboard_frame.winfo_exists():
             self.dashboard_frame.tkraise()
 
     def _open_settings(self):
-        if self.settings_window is not None and self.settings_window.winfo_exists():
-            self.settings_window.lift()
+        """Muestra Configuración dentro de la ventana principal."""
+        if hasattr(self, "settings_frame") and self.settings_frame.winfo_exists():
+            self.settings_frame.tkraise()
+            # Refleja el tema activo al entrar a la página.
+            if hasattr(self, "theme_display_var"):
+                self.theme_display_var.set(
+                    "Modo claro" if self.theme_mode == "light" else "Modo oscuro"
+                )
             return
-
-        win = tk.Toplevel(self.root)
-        self.settings_window = win
-        win.title("Resonantia · Configuración")
-        win.geometry("520x510")
-        win.resizable(False, False)
-        win.configure(bg=self.colors["background"])
-        win.transient(self.root)
-        win.grab_set()
-
-        outer = tk.Frame(win, bg=self.colors["background"])
-        outer.pack(fill="both", expand=True, padx=26, pady=24)
-        tk.Label(outer, text="PREFERENCIAS", bg=self.colors["background"],
-                 fg=self.colors["accent"], font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        tk.Label(outer, text="Configura tu espacio",
-                 bg=self.colors["background"], fg=self.colors["text"],
-                 font=("Segoe UI", 22, "bold")).pack(anchor="w", pady=(5, 18))
-
-        camera_card = RoundedPanel(outer, background=self.colors["surface"],
-                                   border=self.colors["border"], radius=18)
-        camera_card.pack(fill="x", pady=(0, 12))
-        c = camera_card.content
-        tk.Label(c, text="Cámara", bg=self.colors["surface"],
-                 fg=self.colors["text"], font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=14, pady=(13, 3))
-        tk.Label(c, text="Elige el dispositivo que usará la experiencia.",
-                 bg=self.colors["surface"], fg=self.colors["muted"],
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(0, 10))
-        camera_row = tk.Frame(c, bg=self.colors["surface"])
-        camera_row.pack(fill="x", padx=14, pady=(0, 14))
-        camera_values = self._available_cameras()
-        camera_pick = ttk.Combobox(
-            camera_row, values=camera_values, state="readonly", width=12
-        )
-        camera_pick.set(self.camera_var.get() if self.camera_var.get() in camera_values else camera_values[0])
-        camera_pick.pack(side="left")
-        tk.Label(camera_row, text="Se aplicará al iniciar la próxima sesión.",
-                 bg=self.colors["surface"], fg=self.colors["muted"],
-                 font=("Segoe UI", 8)).pack(side="left", padx=10)
-
-        theme_card = RoundedPanel(outer, background=self.colors["surface"],
-                                  border=self.colors["border"], radius=18)
-        theme_card.pack(fill="x", pady=(0, 12))
-        theme_card.configure(height=145)
-        theme_card.pack_propagate(False)
-        t = theme_card.content
-        tk.Label(t, text="Apariencia", bg=self.colors["surface"],
-                 fg=self.colors["text"], font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=14, pady=(13, 3))
-        tk.Label(t, text="Elige el ambiente visual de Resonantia.",
-                 bg=self.colors["surface"], fg=self.colors["muted"],
-                 font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(0, 10))
-        theme_row = tk.Frame(t, bg=self.colors["surface"])
-        theme_row.pack(fill="x", padx=14, pady=(0, 14))
-        self.theme_choice = tk.StringVar(value=self.theme_mode)
-        ttk.Button(
-            theme_row, text="☾  Oscuro",
-            command=lambda: self._preview_theme("dark"),
-        ).pack(side="left", padx=(0, 10))
-        ttk.Button(
-            theme_row, text="☀  Claro",
-            command=lambda: self._preview_theme("light"),
-        ).pack(side="left")
-
-        actions = tk.Frame(outer, bg=self.colors["background"])
-        actions.pack(fill="x", pady=(10, 0))
-        ttk.Button(actions, text="Cerrar", command=win.destroy).pack(side="right")
-        ttk.Button(
-            actions, text="Guardar preferencias", style="Accent.TButton",
-            command=lambda: self._save_settings(camera_pick.get(), self.theme_choice.get(), win)
-        ).pack(side="right", padx=8)
 
     def _available_cameras(self):
         # Índices comunes. Evitamos abrir/probar cámaras desde la ventana de
@@ -1589,21 +1621,6 @@ class ResonantiaApp:
             values.insert(0, current)
         return tuple(values)
 
-
-    def _preview_theme(self, mode):
-        """Aplica el tema al pulsar el selector, sin exigir otro clic."""
-        if hasattr(self, "theme_choice"):
-            self.theme_choice.set(mode)
-        self._apply_theme(mode)
-
-    def _save_settings(self, camera, theme, window):
-        if camera:
-            self.camera_var.set(str(camera))
-        if theme != self.theme_mode:
-            self._apply_theme(theme)
-        window.destroy()
-        self.settings_window = None
-        self.status_var.set("Preferencias guardadas. La cámara seleccionada se usará al iniciar.")
 
     def _apply_theme(self, mode):
         """Cambia toda la paleta de forma reversible, incluidos los paneles Tk."""
