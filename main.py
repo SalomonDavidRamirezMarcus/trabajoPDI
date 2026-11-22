@@ -381,58 +381,31 @@ class MusicWorker:
                 if "bass" in active_roles:
                     allowed_instruments.add("bass")
                 if "chords" in active_roles:
-                    allowed_instruments.add("chords")
+                    # En el secuenciador, el acorde largo de piano está
+                    # etiquetado como "melody". No lo descartamos: lo
+                    # encaminamos al canal "chords", que es el piano acústico.
+                    allowed_instruments.update(("chords", "melody"))
                 if "arpeggio" in active_roles:
                     allowed_instruments.add("arpeggio")
+
+                # Conservamos los eventos originales del secuenciador
+                # (notas, beat, velocity y duración). Solo filtramos por
+                # instrumentos realmente asignados a participantes.
                 events = [
                     event for event in events
                     if event.instrument in allowed_instruments
                 ]
 
-                # PIANO / ACORDES (restaurado desde la lógica musical
-                # funcional anterior): esta capa debe sonar cuando el rol
-                # "chords" esté asignado a una persona detectada. En el
-                # secuenciador actual _create_harmony() está intencionalmente
-                # vacío, así que no podemos depender de él para producir notas.
-                # Generamos un acorde sostenido al inicio de cada dos compases,
-                # respetando la progresión y el canal SoundFont del piano.
-                if "chords" in active_roles and bar_number % 2 == 1:
-                    chord_name = decision.chord
-                    try:
-                        chord_pitch_classes = self.sequencer.harmony.get_chord_notes(
-                            chord_name
-                        )
-                    except (AttributeError, TypeError, ValueError):
-                        chord_pitch_classes = ()
-
-                    # Sustituimos cualquier evento de acordes que venga del
-                    # secuenciador: algunas versiones lo entregan como un toque
-                    # corto. La capa de piano debe conservar el acorde durante
-                    # los dos compases completos (8 pulsos), como en la versión
-                    # funcional anterior. No se modifican los demás instrumentos.
-                    events = [
-                        event for event in events
-                        if event.instrument != "chords"
-                    ]
-                    for pitch_class in chord_pitch_classes:
-                        midi_note = self.sequencer._pitch_class_to_midi(
-                            int(pitch_class), 60, 76, reference_note=67
-                        )
-                        events.append(MusicalEvent(
-                            bar=bar_number,
-                            beat=0.0,
-                            instrument="chords",
-                            midi_note=midi_note,
-                            duration_beats=8.0,
-                            velocity=88,
-                            chord=chord_name,
-                            mode=decision.mode,
-                        ))
-
-                    # El panel y el director reflejan el rol real, no la
-                    # habilitación automática por número de participantes.
-                    decision.harmony_enabled = True
-
+                # IMPORTANTE: el secuenciador conserva el evento del acorde
+                # sostenido con la clave "melody". El mainviejo lo enviaba
+                # sin renombrarlo, por lo que llegaba al canal original:
+                # melody -> canal 0, banco 0, preset 48.
+                #
+                # La tarjeta "Acordes · Piano acústico" autoriza ese evento,
+                # pero NO cambia su clave MIDI. Renombrarlo a "chords" lo
+                # desviaba al canal 2 / preset 0 y alteraba el sonido original.
+                # Se deja el evento intacto para conservar timbre, duración,
+                # velocity, beat y notas del secuenciador.
                 decision.bass_enabled = "bass" in active_roles
                 decision.drums_enabled = "drums" in active_roles
                 decision.harmony_enabled = "chords" in active_roles
