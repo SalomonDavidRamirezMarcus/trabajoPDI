@@ -112,7 +112,7 @@ flowchart LR
 
 ```
 
-main.py                 # Integra cámara, visión, worker musical, audio y GUI
+main.py                 # Integra cámara, visión, worker musical, audio, GUI y preferencias
 src/
 ├── vision.py            # Pose Landmarker, seguimiento e interacciones
 ├── logic.py             # Métricas geométricas y de sincronización
@@ -202,43 +202,26 @@ Si quieres reproducir música, coloca `The_Absolute_Sega_FM_Soundfont_V2.sf2` de
 
 ### Aplicación gráfica (cámara, análisis y música)
 
-
-
 Desde la raíz del repositorio:
 
-
-
 ```powershell
-
 python main.py
-
 ```
 
+La ventana principal de RESONANTIA está organizada en dos vistas accesibles desde el menú lateral:
 
+- **Experiencia:** espacio principal de la instalación. Desde aquí se inicia, detiene o cierra la experiencia; se visualiza la cámara y se consultan las métricas, personas, distancias, contactos, puntos corporales y actividad musical.
+- **Configuración:** pantalla integrada en la misma ventana. No abre una ventana emergente.
 
-La ventana permite:
+En **Configuración** puedes:
 
+1. Elegir el índice de cámara disponible en la lista. La selección se aplica al iniciar la próxima sesión.
+2. Cambiar la apariencia entre **Modo oscuro** y **Modo claro**. El cambio de paleta se aplica inmediatamente a la interfaz.
+3. Volver a **Experiencia** desde el botón de regreso o el menú lateral.
 
+Para comenzar, pulsa **Iniciar experiencia** y ubícate frente a la cámara en un espacio iluminado, con el cuerpo y las manos visibles. Usa **Detener** para finalizar la sesión y **Salir** para cerrar la aplicación.
 
-1\. Elegir el índice de cámara **0–5** en la lista.
-
-2\. Dejar **Reproducir música** desmarcado para usar solo la cámara y el análisis, o marcarlo para activar FluidSynth. Para el audio se requiere el SoundFont local, las DLL de FluidSynth incluidas en el proyecto y una salida de audio.
-
-3\. Pulsar **Iniciar** y situarse frente a la cámara, con buena iluminación y manos visibles. El estado inferior informa si la cámara está activa o si se produjo un error.
-
-4\. Consultar el video y las métricas en vivo. En **Personas**, seleccionar un ID para inspeccionar sus puntos corporales; las pestañas **Distancias**, **Contactos** y **Música** presentan los datos de las parejas, interacciones estimadas y eventos musicales.
-
-5\. Pulsar **Detener** para liberar cámara/audio o **Salir** para cerrar la aplicación.
-
-
-
-La interfaz muestra cantidad de personas y contactos, sincronía grupal, movimiento, apertura de brazos, FPS, modo y acorde actuales; por persona, ID, centro normalizado, desplazamiento, velocidad X/Y, rapidez y dirección; por pareja, distancia y sincronía; y para cada contacto estimado, tipo, IDs y puntos aproximados. La pestaña de puntos corporales incluye los 33 landmarks de cada persona detectada con coordenadas X/Y/Z, visibilidad y presencia. La pestaña musical lista capas, densidad, intensidad y eventos MIDI por pulso.
-
-
-
-Los valores X/Y y las distancias son relativos a la imagen, no unidades físicas. Un contacto detectado es solo una estimación 2D.
-
-
+La interfaz presenta métricas en vivo y pestañas de análisis. Los datos de posición y distancia son relativos a la imagen; los contactos son estimaciones visuales y no confirmaciones de contacto físico.
 
 ### Modo de análisis de visión independiente
 
@@ -462,15 +445,18 @@ No se publican datos de participantes ni resultados de una colección de videos;
 
 ## Interfaz gráfica de usuario
 
+La GUI está implementada en `main.py` con Tkinter. La navegación lateral permite alternar entre **Experiencia** y **Configuración** dentro de la ventana principal, sin abrir una ventana emergente.
 
+La vista **Experiencia** contiene el video procesado, el estado de la sesión, los controles **Iniciar experiencia**, **Detener** y **Salir**, el resumen de instrumentos y los paneles de métricas. Las pestañas permiten consultar tendencias, personas, distancias, contactos estimados, puntos corporales y música.
 
-La GUI está implementada en `main.py` con Tkinter y muestra el video procesado junto con paneles de estado y tablas. Incluye selección de cámara, opción de habilitar audio, controles **Iniciar**, **Detener** y **Salir**, mensajes de error, una tabla de métricas por persona y pestañas para distancias, posibles contactos, puntos corporales y eventos musicales. La selección de un ID en **Personas** actualiza la tabla con sus 33 landmarks.
+La vista **Configuración** permite seleccionar el índice de cámara y elegir la apariencia de la aplicación:
 
+- **Modo oscuro:** paleta grafito, activa inicialmente.
+- **Modo claro:** paleta de fondos claros, superficies blancas y texto oscuro.
 
+La apariencia se actualiza al seleccionar el modo. La cámara seleccionada queda preparada para la próxima sesión.
 
-No se incluyen capturas de pantalla versionadas. La propia ventana constituye la evidencia visual: al ejecutar la aplicación con una cámara y el modelo local disponibles, aparecen el esqueleto y las métricas; para oír música hay que habilitar la opción y preparar el SoundFont.
-
-
+La selección de un ID en **Personas** permite inspeccionar sus landmarks. Los valores mostrados son relativos a la imagen y no representan medidas físicas calibradas.
 
 ## Resultados y evaluación
 
